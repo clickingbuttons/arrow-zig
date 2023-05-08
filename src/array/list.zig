@@ -1,42 +1,6 @@
 const std = @import("std");
 const flat = @import("./flat.zig");
 const tags = @import("../tags.zig");
-const Tag = tags.Tag;
-
-const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
-
-pub fn Array(comptime is_nullable: bool, comptime is_large: bool) type {
-	const tag = Tag.list;
-
-	const NullCount = if (is_nullable) i64 else void;
-	const ValidityList = if (is_nullable) []MaskInt else void;
-	const OffsetType = if (is_large) i64 else i32;
-	const OffsetSlice = []align(64) OffsetType;
-
-	return struct {
-		comptime tag: Tag = tag,
-
-		allocator: std.mem.Allocator,
-		null_count: NullCount,
-		validity: ValidityList,
-		offsets: OffsetSlice,
-		child: tags.Array,
-
-		const Self = @This();
-		pub fn deinit(self: Self) void {
-			self.allocator.free(self.offsets);
-			// See bit_set.zig#deinit
-			if (NullCount != void) {
-				const old_allocation = (self.validity.ptr - 1)[0..(self.validity.ptr - 1)[0]];
-				self.allocator.free(old_allocation);
-			}
-			// self.child.deinit();
-		}
-		pub fn nullCount(self: Self) i64 {
-			return if (NullCount == void) 0 else self.null_count;
-		}
-	};
-}
 
 pub fn ArrayBuilder(comptime ChildBuilder: type, comptime is_nullable: bool, comptime is_large: bool) type {
 	const NullCount = if (is_nullable) i64 else void;
@@ -109,16 +73,21 @@ pub fn ArrayBuilder(comptime ChildBuilder: type, comptime is_nullable: bool, com
 		}
 
 		fn numMasks(bit_length: usize) usize {
-			return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+			return (bit_length + (@bitSizeOf(tags.MaskInt) - 1)) / @bitSizeOf(tags.MaskInt);
     }
 
-		pub fn finish(self: *Self) !Array(is_nullable, is_large) {
+		pub fn finish(self: *Self) !tags.Array {
+			const children = try self.child.values.allocator.alloc(tags.Array, 1);
+			children[0] = try self.child.finish();
 			return .{
-				.allocator = self.offsets.allocator,
-				.null_count = self.null_count,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else {},
-				.offsets = try self.offsets.toOwnedSlice(),
-				.child = tags.Array.init(try self.child.finish()),
+				.tag = tags.Tag{ .list = .{ .is_nullable = is_nullable, .is_large = is_large } },
+				.allocator = self.child.values.allocator,
+				.null_count = if (NullCount != void) self.null_count else 0,
+				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
+				// TODO: implement @ptrCast between slices changing the length
+				.values = &[_]u8{},
+				.children = children,
 			};
 		}
 	};
@@ -148,5 +117,5 @@ test "finish" {
 	defer a.deinit();
 
 	const masks = a.validity;
-	try std.testing.expectEqual(@as(MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
 }

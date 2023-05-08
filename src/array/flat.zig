@@ -3,47 +3,6 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 const Tag = tags.Tag;
 
-const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
-
-pub fn Array(comptime T: type, comptime is_large: bool, comptime is_utf8: bool) type {
-	const tag = Tag.fromType(T, is_large, is_utf8);
-	const layout = tag.abiLayout();
-	if (layout != .Primitive and layout != .VariableBinary) {
-		@compileError("unsupported flat type " ++ @typeName(T));
-	}
-
-	const NullCount = if (@typeInfo(T) == .Optional) i64 else void;
-	const ValiditySlice = if (@typeInfo(T) == .Optional) []MaskInt else void;
-	const OffsetType = if (is_large) i64 else i32;
-	const OffsetSlice = if (layout.hasOffsets()) []align(64) OffsetType else void;
-	const ValueType = tag.ValueType();
-	const ValueSlice = []align(64) ValueType;
-
-	return struct {
-		comptime tag: Tag = tag,
-
-		allocator: std.mem.Allocator,
-		null_count: NullCount,
-		validity: ValiditySlice,
-		offsets: OffsetSlice,
-		values: ValueSlice,
-
-		const Self = @This();
-		pub fn deinit(self: Self) void {
-			self.allocator.free(self.values);
-			if (OffsetSlice != void) self.allocator.free(self.offsets);
-			// See bit_set.zig#deinit
-			if (NullCount != void) {
-				const old_allocation = (self.validity.ptr - 1)[0..(self.validity.ptr - 1)[0]];
-				self.allocator.free(old_allocation);
-			}
-		}
-		pub fn nullCount(self: Self) i64 {
-			return if (NullCount == void) 0 else self.null_count;
-		}
-	};
-}
-
 pub fn ArrayBuilder(comptime T: type, comptime is_large: bool, comptime is_utf8: bool) type {
 	const tag = Tag.fromType(T, is_large, is_utf8);
 	const layout = tag.abiLayout();
@@ -137,16 +96,19 @@ pub fn ArrayBuilder(comptime T: type, comptime is_large: bool, comptime is_utf8:
 		}
 
 		fn numMasks(bit_length: usize) usize {
-			return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+			return (bit_length + (@bitSizeOf(tags.MaskInt) - 1)) / @bitSizeOf(tags.MaskInt);
     }
 
-		pub fn finish(self: *Self) !Array(T, is_large, is_utf8) {
+		pub fn finish(self: *Self) !tags.Array {
 			return .{
+				.tag = tag,
 				.allocator = self.values.allocator,
-				.null_count = self.null_count,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else {},
-				.offsets = if (OffsetList != void) try self.offsets.toOwnedSlice() else {},
-				.values = try self.values.toOwnedSlice(),
+				.null_count = if (NullCount != void) self.null_count else 0,
+				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
+				// TODO: implement @ptrCast between slices changing the length
+				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
+				.children = &[_]tags.Array{}
 			};
 		}
 	};
@@ -169,11 +131,12 @@ test "primitive optional" {
 	try b.append(4);
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(MaskInt, 0b1101), masks[0]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b1101), masks[0]);
 }
 
 test "primitive finish" {
-	var b = try ArrayBuilder(?i32, false, false).init(std.testing.allocator);
+	const T = i32;
+	var b = try ArrayBuilder(?T, false, false).init(std.testing.allocator);
 	try b.append(1);
 	try b.append(null);
 	try b.append(2);
@@ -183,8 +146,8 @@ test "primitive finish" {
 	defer a.deinit();
 
 	const masks = a.validity;
-	try std.testing.expectEqual(@as(MaskInt, 0b1101), masks[0]);
-	try std.testing.expectEqual(@as(i32, 4), a.values[3]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b1101), masks[0]);
+	try std.testing.expectEqual(@as(T, 4), a.values_as(T)[3]);
 }
 
 test "varbinary init + deinit" {
@@ -201,7 +164,7 @@ test "varbinary optional" {
 	try b.append(@constCast(&[_]u8{1,2,3}));
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
 }
 
 test "varbinary finish" {
@@ -213,7 +176,7 @@ test "varbinary finish" {
 	defer a.deinit();
 
 	const masks = a.validity;
-	try std.testing.expectEqual(@as(MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
 	try std.testing.expectEqual(@as(i32, 3), a.values[2]);
 }
 
@@ -224,6 +187,5 @@ test "polymorph" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	var arr = tags.Array.init(a);
-	try std.testing.expectEqual(@as(i64, 0), arr.nullCount());
+	try std.testing.expectEqual(@as(i64, 0), a.null_count);
 }
