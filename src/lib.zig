@@ -11,4 +11,5 @@ test {
 	_ = @import("./array/flat.zig");
 	_ = @import("./array/list.zig");
 	_ = @import("./array/list_fixed.zig");
+	_ = @import("./array/struct.zig");
 }

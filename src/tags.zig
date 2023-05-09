@@ -16,11 +16,6 @@ pub const ListOptions = struct {
  is_nullable: bool
 };
 
-pub const FixedListOptions = struct {
- fixed_len: i32,
- is_nullable: bool,
-};
-
 pub const Tag = union(enum) {
 	null,
 	bool: PrimitiveOptions,
@@ -45,7 +40,8 @@ pub const Tag = union(enum) {
 	binary: BinaryOptions,
 	// FixedSizeBinary(i32),
 	list: ListOptions,
-	list_fixed: FixedListOptions,
+	list_fixed: PrimitiveOptions,
+	struct_: PrimitiveOptions,
 	// Struct(Fields),
 	// Union(UnionFields, UnionMode),
 	// Dictionary(Box<DataType>, Box<DataType>),
@@ -112,7 +108,7 @@ pub const Tag = union(enum) {
 
 	pub fn ValueType(comptime self: Self) type {
 		return switch (self) {
-			.null, .list, .list_fixed => void,
+			.null, .list, .list_fixed, .struct_ => void,
 			.bool => bool,
 			.i64 => i64,
 			.i32 => i32,
@@ -137,6 +133,7 @@ pub const Tag = union(enum) {
 			.binary => .VariableBinary,
 			.list => .List,
 			.list_fixed => .FixedList,
+			.struct_ => .Struct,
 		};
 	}
 
@@ -161,6 +158,7 @@ pub const Tag = union(enum) {
 			},
 			.list => "+l",
 			.list_fixed => "+w",
+			.struct_ => "+s",
 		};
 	}
 };

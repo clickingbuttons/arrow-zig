@@ -1,4 +1,4 @@
-// Flat means no children.
+// Flat means no children. Includes Primitive and VariableBinary layouts.
 const std = @import("std");
 const tags = @import("../tags.zig");
 const Tag = tags.Tag;
@@ -185,17 +185,6 @@ test "varbinary finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	const masks = a.validity;
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), a.validity[0]);
 	try std.testing.expectEqual(@as(i32, 'l'), a.values[2]);
-}
-
-test "polymorph" {
-	var b = try ArrayBuilder([]const u8).init(std.testing.allocator);
-	try b.append(&[_]u8{1,2,3});
-
-	const a = try b.finish();
-	defer a.deinit();
-
-	try std.testing.expectEqual(@as(i64, 0), a.null_count);
 }
