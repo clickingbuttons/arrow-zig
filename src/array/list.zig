@@ -1,16 +1,18 @@
 const std = @import("std");
-const flat = @import("./flat.zig");
 const tags = @import("../tags.zig");
 
-pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions) type {
+pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
 	const NullCount = if (opts.is_nullable) i64 else void;
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
 	const OffsetType = if (opts.is_large) i64 else i32;
-	const OffsetList = std.ArrayListAligned(OffsetType, 64);
+	const OffsetList = if (fixed_len == 0) std.ArrayListAligned(OffsetType, 64) else void;
 
 	const ChildAppendType = ChildBuilder.Type();
-	const AppendType = if (opts.is_nullable) ?[]const ChildAppendType else []const ChildAppendType;
+	const AppendType = switch (opts.is_nullable) {
+		true => if (fixed_len > 0) ?[fixed_len]ChildAppendType else ?[]const ChildAppendType,
+		false => if (fixed_len > 0) [fixed_len]ChildAppendType else []const ChildAppendType,
+	};
 
 	return struct {
 		const Self = @This();
@@ -24,7 +26,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 			var res = Self {
 				.null_count = if (NullCount != void) 0 else {},
 				.validity = if (ValidityList != void) try ValidityList.initEmpty(allocator, 0) else {},
-				.offsets = OffsetList.init(allocator),
+				.offsets = if (OffsetList != void) OffsetList.init(allocator) else {},
 				.child = try ChildBuilder.init(allocator),
 			};
 			if (OffsetList != void) {
@@ -43,7 +45,13 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 		fn appendAny(self: *Self, value: anytype) std.mem.Allocator.Error!void {
 			return switch (@typeInfo(@TypeOf(value))) {
 				.Null => {
-					try self.offsets.append(self.offsets.items[self.offsets.items.len - 1]);
+					if (OffsetList != void) {
+						try self.offsets.append(self.offsets.items[self.offsets.items.len - 1]);
+					} else {
+						for (0..fixed_len) |_| {
+							try self.child.append(0);
+						}
+					}
 				},
 				.Optional => {
 					const is_null = value == null;
@@ -63,6 +71,12 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 						try self.offsets.append(@intCast(OffsetType, self.child.values.items.len));
 					},
 					else => |t| @compileError("unsupported pointer type " ++ @tagName(t)),
+				},
+				.Array => |a| {
+					std.debug.assert(a.len == fixed_len);
+					for (value) |v| {
+						try self.child.append(v);
+					}
 				},
 				else => |t| @compileError("unsupported append type " ++ @tagName(t))
 			};
@@ -94,14 +108,15 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 }
 
 pub fn ArrayBuilder(comptime ChildBuilder: type) type {
-	return ArrayBuilderAdvanced(ChildBuilder, .{ .is_nullable = true, .is_large = false });
+	return ArrayBuilderAdvanced(ChildBuilder, .{ .is_nullable = true, .is_large = false }, 0);
 }
 
+const flat = @import("./flat.zig");
 test "init + deinit optional child and parent" {
 	var b = try ArrayBuilder(flat.ArrayBuilder(?i8)).init(std.testing.allocator);
 	defer b.deinit();
 
-	try b.append(@constCast(&[_]?i8{1,null,3}));
+	try b.append(&[_]?i8{1,null,3});
 	try b.append(null);
 }
 
@@ -115,7 +130,7 @@ test "init + deinit varbinary" {
 test "finish" {
 	var b = try ArrayBuilder(flat.ArrayBuilder(i8)).init(std.testing.allocator);
 	try b.append(null);
-	try b.append(@constCast(&[_]i8{1,2,3}));
+	try b.append(&[_]i8{1,2,3});
 
 	const a = try b.finish();
 	defer a.deinit();

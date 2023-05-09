@@ -16,6 +16,11 @@ pub const ListOptions = struct {
  is_nullable: bool
 };
 
+pub const FixedListOptions = struct {
+ fixed_len: i32,
+ is_nullable: bool,
+};
+
 pub const Tag = union(enum) {
 	null,
 	bool: PrimitiveOptions,
@@ -40,8 +45,7 @@ pub const Tag = union(enum) {
 	binary: BinaryOptions,
 	// FixedSizeBinary(i32),
 	list: ListOptions,
-	// FixedSizeList(FieldRef, i32),
-	// LargeList(FieldRef),
+	list_fixed: FixedListOptions,
 	// Struct(Fields),
 	// Union(UnionFields, UnionMode),
 	// Dictionary(Box<DataType>, Box<DataType>),
@@ -108,7 +112,7 @@ pub const Tag = union(enum) {
 
 	pub fn ValueType(comptime self: Self) type {
 		return switch (self) {
-			.null, .list => void,
+			.null, .list, .list_fixed => void,
 			.bool => bool,
 			.i64 => i64,
 			.i32 => i32,
@@ -132,6 +136,7 @@ pub const Tag = union(enum) {
 			.null => .Null,
 			.binary => .VariableBinary,
 			.list => .List,
+			.list_fixed => .FixedList,
 		};
 	}
 
@@ -154,7 +159,8 @@ pub const Tag = union(enum) {
 				true => if (b.is_large) "U" else "u",
 				false => if (b.is_large) "Z" else "z",
 			},
-			.list => "+l"
+			.list => "+l",
+			.list_fixed => "+w",
 		};
 	}
 };
@@ -181,9 +187,15 @@ pub const Array = struct {
 			self.allocator.free(old_allocation);
 		}
 
-		self.allocator.free(self.offsets);
-		self.allocator.free(self.values);
-		self.allocator.free(self.children);
+		if (self.offsets.len > 0) {
+			self.allocator.free(self.offsets);
+		}
+		if (self.values.len > 0) {
+			self.allocator.free(self.values);
+		}
+		if (self.children.len > 0) {
+			self.allocator.free(self.children);
+		}
 	}
 
 	pub fn values_as(self: @This(), comptime T: type) []T {
@@ -191,6 +203,29 @@ pub const Array = struct {
 	}
 };
 
-test "array size" {
-	std.debug.print("{d}\n", .{@sizeOf(Array) / 8});
+fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 { return null; }
+fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool { return false; }
+fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {}
+
+pub const null_array = Array {
+	.tag = .null,
+	.allocator = std.mem.Allocator {
+		.ptr = undefined,
+		.vtable = &std.mem.Allocator.VTable {
+			.alloc = alloc,
+			.resize = resize,
+			.free = free,
+		}
+	},
+	.null_count = 0,
+	.validity = &[_]MaskInt{},
+	.offsets = &[_]u8{},
+	.values = &[_]u8{},
+	.children = &[_]Array{},
+};
+
+test "null array" {
+	const n = null_array;
+	defer n.deinit();
+	try std.testing.expectEqual(@as(i64, 0), n.null_count);
 }
