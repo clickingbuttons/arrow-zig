@@ -3,8 +3,8 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 const Tag = tags.Tag;
 
-pub fn ArrayBuilder(comptime T: type, comptime is_large: bool, comptime is_utf8: bool) type {
-	const tag = Tag.fromType(T, is_large, is_utf8);
+pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
+	const tag = Tag.fromType(T, opts.is_large, opts.is_utf8);
 	const layout = tag.abiLayout();
 	if (layout != .Primitive and layout != .VariableBinary) {
 		@compileError("unsupported flat type " ++ @typeName(T));
@@ -15,7 +15,7 @@ pub fn ArrayBuilder(comptime T: type, comptime is_large: bool, comptime is_utf8:
 	const ValidityList = if (@typeInfo(T) == .Optional) std.bit_set.DynamicBitSet else void;
 	const ValueType = tag.ValueType();
 
-	const OffsetType = if (is_large) i64 else i32;
+	const OffsetType = if (opts.is_large) i64 else i32;
 	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, 64) else void;
 	const ValueList = std.ArrayListAligned(ValueType, 64);
 
@@ -114,16 +114,19 @@ pub fn ArrayBuilder(comptime T: type, comptime is_large: bool, comptime is_utf8:
 	};
 }
 
+pub fn ArrayBuilder(comptime T: type) type {
+	return ArrayBuilderAdvanced(T, .{ .is_large = false, .is_utf8 = false });
+}
 
 test "primitive init + deinit" {
-	var b = try ArrayBuilder(i32, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(i32).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(32);
 }
 
 test "primitive optional" {
-	var b = try ArrayBuilder(?i32, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(?i32).init(std.testing.allocator);
 	defer b.deinit();
 	try b.append(1);
 	try b.append(null);
@@ -136,7 +139,7 @@ test "primitive optional" {
 
 test "primitive finish" {
 	const T = i32;
-	var b = try ArrayBuilder(?T, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(?T).init(std.testing.allocator);
 	try b.append(1);
 	try b.append(null);
 	try b.append(2);
@@ -151,14 +154,21 @@ test "primitive finish" {
 }
 
 test "varbinary init + deinit" {
-	var b = try ArrayBuilder([]u8, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder([]u8).init(std.testing.allocator);
+	defer b.deinit();
+
+	try b.append(@constCast(&[_]u8{1,2,3}));
+}
+
+test "varbinary utf8" {
+	var b = try ArrayBuilderAdvanced([]u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(@constCast(&[_]u8{1,2,3}));
 }
 
 test "varbinary optional" {
-	var b = try ArrayBuilder(?[]u8, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(?[]u8).init(std.testing.allocator);
 	defer b.deinit();
 	try b.append(null);
 	try b.append(@constCast(&[_]u8{1,2,3}));
@@ -168,7 +178,7 @@ test "varbinary optional" {
 }
 
 test "varbinary finish" {
-	var b = try ArrayBuilder(?[]u8, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(?[]u8).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(@constCast(&[_]u8{1,2,3}));
 
@@ -181,7 +191,7 @@ test "varbinary finish" {
 }
 
 test "polymorph" {
-	var b = try ArrayBuilder([]u8, false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder([]u8).init(std.testing.allocator);
 	try b.append(@constCast(&[_]u8{1,2,3}));
 
 	const a = try b.finish();

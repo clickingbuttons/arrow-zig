@@ -2,15 +2,15 @@ const std = @import("std");
 const flat = @import("./flat.zig");
 const tags = @import("../tags.zig");
 
-pub fn ArrayBuilder(comptime ChildBuilder: type, comptime is_nullable: bool, comptime is_large: bool) type {
-	const NullCount = if (is_nullable) i64 else void;
-	const ValidityList = if (is_nullable) std.bit_set.DynamicBitSet else void;
+pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions) type {
+	const NullCount = if (opts.is_nullable) i64 else void;
+	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
-	const OffsetType = if (is_large) i64 else i32;
+	const OffsetType = if (opts.is_large) i64 else i32;
 	const OffsetList = std.ArrayListAligned(OffsetType, 64);
 
 	const ChildAppendType = ChildBuilder.Type();
-	const AppendType = if (is_nullable) ?[]ChildAppendType else []ChildAppendType;
+	const AppendType = if (opts.is_nullable) ?[]ChildAppendType else []ChildAppendType;
 
 	return struct {
 		const Self = @This();
@@ -80,12 +80,12 @@ pub fn ArrayBuilder(comptime ChildBuilder: type, comptime is_nullable: bool, com
 			const children = try self.child.values.allocator.alloc(tags.Array, 1);
 			children[0] = try self.child.finish();
 			return .{
-				.tag = tags.Tag{ .list = .{ .is_nullable = is_nullable, .is_large = is_large } },
+				.tag = tags.Tag{ .list = opts },
 				.allocator = self.child.values.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
 				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
-				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				// TODO: implement @ptrCast between slices changing the length
+				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				.values = &[_]u8{},
 				.children = children,
 			};
@@ -93,8 +93,12 @@ pub fn ArrayBuilder(comptime ChildBuilder: type, comptime is_nullable: bool, com
 	};
 }
 
+pub fn ArrayBuilder(comptime ChildBuilder: type) type {
+	return ArrayBuilderAdvanced(ChildBuilder, .{ .is_nullable = true, .is_large = false });
+}
+
 test "init + deinit optional child and parent" {
-	var b = try ArrayBuilder(flat.ArrayBuilder(?i8, false, false), true, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(flat.ArrayBuilder(?i8)).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(@constCast(&[_]?i8{1,null,3}));
@@ -102,14 +106,14 @@ test "init + deinit optional child and parent" {
 }
 
 test "init + deinit varbinary" {
-	var b = try ArrayBuilder(flat.ArrayBuilder([]u8, false, false), false, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(flat.ArrayBuilder([]u8)).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(@constCast(&[_][]u8{@constCast(&[_]u8{1,2,3})}));
 }
 
 test "finish" {
-	var b = try ArrayBuilder(flat.ArrayBuilder(i8, false, false), true, false).init(std.testing.allocator);
+	var b = try ArrayBuilder(flat.ArrayBuilder(i8)).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(@constCast(&[_]i8{1,2,3}));
 

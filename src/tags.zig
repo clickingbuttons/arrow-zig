@@ -2,20 +2,34 @@ const std = @import("std");
 const abi = @import("./abi.zig");
 const flat = @import("./array/flat.zig");
 
+pub const PrimitiveOptions = struct {
+	is_nullable: bool
+};
+
+pub const BinaryOptions = struct {
+	is_large: bool,
+	is_utf8: bool
+};
+
+pub const ListOptions = struct {
+ is_nullable: bool,
+ is_large: bool
+};
+
 pub const Tag = union(enum) {
 	null,
-	bool: struct { is_nullable: bool },
-	i64: struct { is_nullable: bool },
-	i32: struct { is_nullable: bool },
-	i16: struct { is_nullable: bool },
-	i8: struct { is_nullable: bool },
-	u64: struct { is_nullable: bool },
-	u32: struct { is_nullable: bool },
-	u16: struct { is_nullable: bool },
-	u8: struct { is_nullable: bool },
-	f64: struct { is_nullable: bool },
-	f32: struct { is_nullable: bool },
-	f16: struct { is_nullable: bool },
+	bool: PrimitiveOptions,
+	i64: PrimitiveOptions,
+	i32: PrimitiveOptions,
+	i16: PrimitiveOptions,
+	i8: PrimitiveOptions,
+	u64: PrimitiveOptions,
+	u32: PrimitiveOptions,
+	u16: PrimitiveOptions,
+	u8: PrimitiveOptions,
+	f64: PrimitiveOptions,
+	f32: PrimitiveOptions,
+	f16: PrimitiveOptions,
 	// Timestamp(TimeUnit, Option<Arc<str>>),
 	// date64,
 	// date32,
@@ -23,9 +37,9 @@ pub const Tag = union(enum) {
 	// Time64(TimeUnit),
 	// Duration(TimeUnit),
 	// Interval(IntervalUnit),
-	binary: struct { is_large: bool, is_utf8: bool },
+	binary: BinaryOptions,
 	// FixedSizeBinary(i32),
-	list: struct { is_nullable: bool, is_large: bool },
+	list: ListOptions,
 	// FixedSizeList(FieldRef, i32),
 	// LargeList(FieldRef),
 	// Struct(Fields),
