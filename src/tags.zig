@@ -7,13 +7,13 @@ pub const PrimitiveOptions = struct {
 };
 
 pub const BinaryOptions = struct {
-	is_large: bool,
-	is_utf8: bool
+	is_large: bool = false,
+	is_utf8: bool = false
 };
 
 pub const ListOptions = struct {
- is_nullable: bool,
- is_large: bool
+ is_large: bool = false,
+ is_nullable: bool
 };
 
 pub const Tag = union(enum) {
@@ -51,49 +51,46 @@ pub const Tag = union(enum) {
 	// RunEndEncoded(FieldRef, FieldRef),
 
 	const Self = @This();
-	fn fromTypeNullable(
-		comptime T: type,
-		comptime is_large: bool,
-		comptime is_utf8: bool,
-		comptime is_nullable: bool
-	) Self {
+	pub fn fromPrimitiveType(comptime T: type, comptime opts: BinaryOptions) Self {
+		const is_nullable = @typeInfo(T) == .Optional;
+		const ChildType = if (is_nullable) @typeInfo(T).Optional.child else T;
+		const primitive_opts = PrimitiveOptions { .is_nullable = is_nullable };
 		// https://github.com/ziglang/zig/blob/94e30a756edc4c2182168dabd97d481b8aec0ff2/lib/std/builtin.zig#L228
-		return switch (@typeInfo(T)) {
+		return switch (@typeInfo(ChildType)) {
 			.Void, .Null => .null,
-			.Bool => Self { .bool = .{ .is_nullable = is_nullable } },
+			.Bool => Self { .bool = primitive_opts },
 			.Int => |info| switch (info.bits) {
 				64 => switch (info.signedness) {
-					.signed => Self { .i64 = .{ .is_nullable = is_nullable } },
-					.unsigned => Self { .u64 = .{ .is_nullable = is_nullable } },
+					.signed => Self { .i64 = primitive_opts },
+					.unsigned => Self { .u64 = primitive_opts },
 				},
 				32 => switch (info.signedness) {
-					.signed => Self { .i32 = .{ .is_nullable = is_nullable } },
-					.unsigned => Self { .u32 = .{ .is_nullable = is_nullable } },
+					.signed => Self { .i32 = primitive_opts },
+					.unsigned => Self { .u32 = primitive_opts },
 				},
 				16 => switch (info.signedness) {
-					.signed => Self { .i16 = .{ .is_nullable = is_nullable } },
-					.unsigned => Self { .u16 = .{ .is_nullable = is_nullable } },
+					.signed => Self { .i16 = primitive_opts },
+					.unsigned => Self { .u16 = primitive_opts },
 				},
 				8 => switch (info.signedness) {
-					.signed => Self { .i8 = .{ .is_nullable = is_nullable } },
-					.unsigned => Self { .u8 = .{ .is_nullable = is_nullable } },
+					.signed => Self { .i8 = primitive_opts },
+					.unsigned => Self { .u8 = primitive_opts },
 				},
 				else => |w| @compileError(std.fmt.comptimePrint("unsupported int width {}", .{w})),
 			},
 			.Float => |info| switch (info.bits) {
-				64 => Self { .f64 = .{ .is_nullable = is_nullable } },
-				32 => Self { .f32 = .{ .is_nullable = is_nullable } },
-				16 => Self { .f16 = .{ .is_nullable = is_nullable } },
+				64 => Self { .f64 = primitive_opts },
+				32 => Self { .f32 = primitive_opts },
+				16 => Self { .f16 = primitive_opts },
 				else => |w| @compileError(std.fmt.comptimePrint("unsupported float width {}", .{w})),
 			},
 			.Pointer => |p| switch (p.size) {
 				.Slice => switch (p.child) {
-					u8, ?u8 => Self { .binary = .{ .is_large = is_large, .is_utf8 = is_utf8 } },
-					else => Self { .list = .{ .is_nullable = is_nullable, .is_large = is_large } },
+					u8, ?u8 => Self { .binary = opts },
+					else => @compileError("unsupported slice type " ++ @typeName(T))
 				},
 				else => @compileError("unsupported abi type " ++ @typeName(T))
 			},
-			.Optional => |o| fromTypeNullable(o.child, is_large, is_utf8, true),
 			// .Array => |a| {
 			// 	const byte_size = a.len * @sizeOf(a.child);
 			// 	return std.fmt.comptimePrint("w:{d}", .{byte_size});
@@ -102,19 +99,11 @@ pub const Tag = union(enum) {
 		};
 	}
 
-	pub fn fromType(comptime T: type, comptime is_large: bool, comptime is_utf8: bool) Self {
-		return fromTypeNullable(T, is_large, is_utf8, false);
-	}
-
 	test "tag types" {
-		try std.testing.expectEqual(Tag.u8, Tag.fromType(u8, false, false));
-		try std.testing.expectEqual(Tag.i32, Tag.fromType(?i32, false, false));
-		try std.testing.expectEqual(Tag.binary, Tag.fromType([]u8, false, false));
-		try std.testing.expectEqual(Tag.binary, Tag.fromType([]?u8, false, false));
-		try std.testing.expectEqual(Tag.binary, Tag.fromType([]u8, true, false));
-		try std.testing.expectEqual(Tag.binary, Tag.fromType([]u8, false, true));
-		try std.testing.expectEqual(Tag.binary, Tag.fromType([]u8, true, true));
-		try std.testing.expectEqual(Tag.list, Tag.fromType([]i8, false, false));
+		try std.testing.expectEqual(Tag.u8, Tag.fromPrimitiveType(u8, .{}));
+		try std.testing.expectEqual(Tag.i32, Tag.fromPrimitiveType(?i32, .{}));
+		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitiveType([]u8, .{}));
+		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitiveType([]?u8, .{}));
 	}
 
 	pub fn ValueType(comptime self: Self) type {

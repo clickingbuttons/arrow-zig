@@ -10,7 +10,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 	const OffsetList = std.ArrayListAligned(OffsetType, 64);
 
 	const ChildAppendType = ChildBuilder.Type();
-	const AppendType = if (opts.is_nullable) ?[]ChildAppendType else []ChildAppendType;
+	const AppendType = if (opts.is_nullable) ?[]const ChildAppendType else []const ChildAppendType;
 
 	return struct {
 		const Self = @This();
@@ -106,10 +106,10 @@ test "init + deinit optional child and parent" {
 }
 
 test "init + deinit varbinary" {
-	var b = try ArrayBuilder(flat.ArrayBuilder([]u8)).init(std.testing.allocator);
+	var b = try ArrayBuilder(flat.ArrayBuilder([]const u8)).init(std.testing.allocator);
 	defer b.deinit();
 
-	try b.append(@constCast(&[_][]u8{@constCast(&[_]u8{1,2,3})}));
+	try b.append(&[_][]const u8{"hello", "goodbye"});
 }
 
 test "finish" {

@@ -4,7 +4,7 @@ const tags = @import("../tags.zig");
 const Tag = tags.Tag;
 
 pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
-	const tag = Tag.fromType(T, opts.is_large, opts.is_utf8);
+	const tag = Tag.fromPrimitiveType(T, opts);
 	const layout = tag.abiLayout();
 	if (layout != .Primitive and layout != .VariableBinary) {
 		@compileError("unsupported flat type " ++ @typeName(T));
@@ -154,45 +154,45 @@ test "primitive finish" {
 }
 
 test "varbinary init + deinit" {
-	var b = try ArrayBuilder([]u8).init(std.testing.allocator);
+	var b = try ArrayBuilder([]const u8).init(std.testing.allocator);
 	defer b.deinit();
 
-	try b.append(@constCast(&[_]u8{1,2,3}));
+	try b.append(&[_]u8{1,2,3});
 }
 
 test "varbinary utf8" {
-	var b = try ArrayBuilderAdvanced([]u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
+	var b = try ArrayBuilderAdvanced([]const u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
 	defer b.deinit();
 
-	try b.append(@constCast(&[_]u8{1,2,3}));
+	try b.append(&[_]u8{1,2,3});
 }
 
 test "varbinary optional" {
-	var b = try ArrayBuilder(?[]u8).init(std.testing.allocator);
+	var b = try ArrayBuilder(?[]const u8).init(std.testing.allocator);
 	defer b.deinit();
 	try b.append(null);
-	try b.append(@constCast(&[_]u8{1,2,3}));
+	try b.append(&[_]u8{1,2,3});
 
 	const masks = b.validity.unmanaged.masks;
 	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
 }
 
 test "varbinary finish" {
-	var b = try ArrayBuilder(?[]u8).init(std.testing.allocator);
+	var b = try ArrayBuilder(?[]const u8).init(std.testing.allocator);
 	try b.append(null);
-	try b.append(@constCast(&[_]u8{1,2,3}));
+	try b.append("hello");
 
 	const a = try b.finish();
 	defer a.deinit();
 
 	const masks = a.validity;
 	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
-	try std.testing.expectEqual(@as(i32, 3), a.values[2]);
+	try std.testing.expectEqual(@as(i32, 'l'), a.values[2]);
 }
 
 test "polymorph" {
-	var b = try ArrayBuilder([]u8).init(std.testing.allocator);
-	try b.append(@constCast(&[_]u8{1,2,3}));
+	var b = try ArrayBuilder([]const u8).init(std.testing.allocator);
+	try b.append(&[_]u8{1,2,3});
 
 	const a = try b.finish();
 	defer a.deinit();
