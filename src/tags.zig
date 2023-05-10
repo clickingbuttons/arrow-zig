@@ -22,6 +22,17 @@ pub const UnionOptions = struct {
 	is_dense: bool = true,
 };
 
+pub const DictIndex = enum {
+	i8,
+	i16,
+	i32,
+	i64
+};
+
+pub const DictOptions = struct {
+	index: DictIndex,
+};
+
 pub const Tag = union(enum) {
 	null,
 	bool: PrimitiveOptions,
@@ -49,7 +60,7 @@ pub const Tag = union(enum) {
 	list_fixed: PrimitiveOptions,
 	struct_: PrimitiveOptions,
 	union_: UnionOptions,
-	// Dictionary(Box<DataType>, Box<DataType>),
+	dictionary: DictOptions,
 	// Decimal128(u8, i8),
 	// Decimal256(u8, i8),
 	// Map(FieldRef, bool),
@@ -96,10 +107,6 @@ pub const Tag = union(enum) {
 				},
 				else => @compileError("unsupported abi type " ++ @typeName(T))
 			},
-			// .Array => |a| {
-			// 	const byte_size = a.len * @sizeOf(a.child);
-			// 	return std.fmt.comptimePrint("w:{d}", .{byte_size});
-			// },
 			else => @compileError("unsupported abi type " ++ @typeName(T)),
 		};
 	}
@@ -113,7 +120,7 @@ pub const Tag = union(enum) {
 
 	pub fn ValueType(comptime self: Self) type {
 		return switch (self) {
-			.null, .list, .list_fixed, .struct_, .union_ => void,
+			.null, .list, .list_fixed, .struct_, .union_, .dictionary => void,
 			.bool => bool,
 			.i64 => i64,
 			.i32 => i32,
@@ -134,12 +141,13 @@ pub const Tag = union(enum) {
 		// https://arrow.apache.org/docs/format/Columnar.html#buffer-listing-for-each-layout
 		return switch (self) {
 			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, => .Primitive,
-			.null => .Null,
 			.binary => .VariableBinary,
 			.list => .List,
 			.list_fixed => .FixedList,
 			.struct_ => .Struct,
 			.union_ => |u| if (u.is_dense) .DenseUnion else .SparseUnion,
+			.null => .Null,
+			.dictionary => .Dictionary,
 		};
 	}
 
@@ -165,7 +173,8 @@ pub const Tag = union(enum) {
 			.list => "+l",
 			.list_fixed => "+w",
 			.struct_ => "+s",
-			.union_ => |u| if (u.is_dense) "+ud" else "+us"
+			.union_ => |u| if (u.is_dense) "+ud" else "+us",
+			.dictionary => |d| abiFormat(@field(Self, @tagName(d)))
 		};
 	}
 };

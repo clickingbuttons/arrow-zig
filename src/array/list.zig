@@ -24,6 +24,10 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 		offsets: OffsetList,
 		child: ChildBuilder,
 
+		pub fn Type() type {
+			return AppendType;
+		}
+
 		pub fn init(allocator: std.mem.Allocator) !Self {
 			var res = Self {
 				.null_count = if (NullCount != void) 0 else {},

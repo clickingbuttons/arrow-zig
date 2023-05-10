@@ -48,6 +48,10 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 		validity: ValidityList,
 		children: ChildrenBuilders,
 
+		pub fn Type() type {
+			return AppendType;
+		}
+
 		pub fn init(allocator: std.mem.Allocator) !Self {
 			var children: ChildrenBuilders = undefined;
 			inline for (@typeInfo(ChildrenBuilders).Struct.fields) |f| {

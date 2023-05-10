@@ -1,4 +1,4 @@
-// Unions
+// Sparse + dense unions. Prefer dense.
 const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");

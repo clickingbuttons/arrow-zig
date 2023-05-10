@@ -12,11 +12,12 @@
 	- no for now, but would look like https://github.com/ziglang/zig/issues/1099#issuecomment-846404132
 
 ## impl
-- [ ] union
+- [x] union
 - [ ] dict
 
 ## pretty
 - [ ] generic builder
+	- [ ] remove flat from list/union/dict
 
 ## impl
 - [ ] flatbuffers

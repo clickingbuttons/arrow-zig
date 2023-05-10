@@ -2,6 +2,7 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 
 pub const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
+// This exists to be able to nest arrays at runtime.
 pub const Array = struct {
 	tag: tags.Tag, // 1
 	allocator: std.mem.Allocator, // 2

@@ -13,4 +13,5 @@ test {
 	_ = @import("./array/list_fixed.zig");
 	_ = @import("./array/struct.zig");
 	_ = @import("./array/union.zig");
+	_ = @import("./array/dict.zig");
 }
