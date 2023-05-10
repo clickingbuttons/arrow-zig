@@ -95,7 +95,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 				.tag = tags.Tag{ .list = opts },
 				.allocator = self.child.values.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]tags.MaskInt{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				.values = &[_]u8{},

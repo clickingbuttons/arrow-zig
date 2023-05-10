@@ -1,0 +1,23 @@
+## pretty
+- [x] better slice append
+- [x] better comptime params (structs)
+
+## impl
+- [x] null
+- [x] fixed-size list
+- [x] struct
+
+## pretty
+- [x] struct tagging?
+	- no for now, but would look like https://github.com/ziglang/zig/issues/1099#issuecomment-846404132
+
+## impl
+- [ ] union
+- [ ] dict
+
+## pretty
+- [ ] generic builder
+
+## impl
+- [ ] flatbuffers
+

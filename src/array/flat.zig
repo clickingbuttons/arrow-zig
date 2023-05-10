@@ -100,7 +100,7 @@ pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions)
 				.tag = tag,
 				.allocator = self.values.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]array.MaskInt{},
+				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]array.MaskInt{},
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),

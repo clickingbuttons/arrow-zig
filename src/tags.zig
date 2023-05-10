@@ -12,8 +12,14 @@ pub const BinaryOptions = struct {
 };
 
 pub const ListOptions = struct {
- is_large: bool = false,
- is_nullable: bool
+	is_nullable: bool,
+	is_large: bool = false,
+};
+
+pub const UnionOptions = struct {
+	// https://arrow.apache.org/docs/format/Columnar.html#union-layout
+	is_nullable: bool,
+	is_dense: bool = true,
 };
 
 pub const Tag = union(enum) {
@@ -42,7 +48,7 @@ pub const Tag = union(enum) {
 	list: ListOptions,
 	list_fixed: PrimitiveOptions,
 	struct_: PrimitiveOptions,
-	// Union(UnionFields, UnionMode),
+	union_: UnionOptions,
 	// Dictionary(Box<DataType>, Box<DataType>),
 	// Decimal128(u8, i8),
 	// Decimal256(u8, i8),
@@ -107,7 +113,7 @@ pub const Tag = union(enum) {
 
 	pub fn ValueType(comptime self: Self) type {
 		return switch (self) {
-			.null, .list, .list_fixed, .struct_ => void,
+			.null, .list, .list_fixed, .struct_, .union_ => void,
 			.bool => bool,
 			.i64 => i64,
 			.i32 => i32,
@@ -133,6 +139,7 @@ pub const Tag = union(enum) {
 			.list => .List,
 			.list_fixed => .FixedList,
 			.struct_ => .Struct,
+			.union_ => |u| if (u.is_dense) .DenseUnion else .SparseUnion,
 		};
 	}
 
@@ -158,6 +165,7 @@ pub const Tag = union(enum) {
 			.list => "+l",
 			.list_fixed => "+w",
 			.struct_ => "+s",
+			.union_ => |u| if (u.is_dense) "+ud" else "+us"
 		};
 	}
 };

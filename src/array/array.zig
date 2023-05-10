@@ -39,8 +39,16 @@ pub const Array = struct {
 	}
 };
 
-pub fn numMasks(bit_length: usize) usize {
+fn numMasks(bit_length: usize) usize {
 	return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+}
+
+pub fn validity(bit_set: *std.bit_set.DynamicBitSet, null_count: i64) []MaskInt {
+	if (null_count == 0) {
+		bit_set.deinit();
+		return &.{};
+	}
+	return bit_set.unmanaged.masks[0..numMasks(bit_set.unmanaged.bit_length)];
 }
 
 // Dummy allocator

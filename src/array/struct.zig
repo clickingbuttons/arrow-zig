@@ -25,7 +25,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
  		.Struct = .{
  			.layout = .Auto,
  			.fields = fields[0..],
- 			.decls = &[_]std.builtin.Type.Declaration{},
+ 			.decls = &.{},
  			.is_tuple = false,
  		},
  	});
@@ -54,14 +54,12 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 				const BuilderType = f.type;
 				@field(children, f.name) = try BuilderType.init(allocator);
 			}
-			var res = Self {
+			return .{
 				.allocator = allocator,
 				.null_count = if (NullCount != void) 0 else {},
 				.validity = if (ValidityList != void) try ValidityList.initEmpty(allocator, 0) else {},
 				.children = children,
 			};
-
-			return res;
 		}
 
 		pub fn deinit(self: *Self) void {
@@ -111,7 +109,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 				.tag = tags.Tag{ .struct_ = opts },
 				.allocator = self.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = &[_]u8{},
 				.values = &[_]u8{},
@@ -130,6 +128,7 @@ test "struct advanced" {
 	defer b.deinit();
 
 	try b.append(.{ .key = "asdf", .val = 1 });
+	try b.append(.{ .key = "ffgg", .val = 2 });
 }
 
 test "nullable struct advanced with finish" {
@@ -154,7 +153,7 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type 
  	for (t.fields, 0..) |f, i| {
 		if (is_nullable and @typeInfo(f.type) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(f.type) ++ "' is not nullable."
-				++ " ALL nullable structs MUST be nullable");
+				++ " ALL nullable struct fields MUST be nullable");
 		}
  		fields[i] = .{
  			.name = f.name,
@@ -168,7 +167,7 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type 
  		.Struct = .{
  			.layout = .Auto,
  			.fields = fields[0..],
- 			.decls = &[_]std.builtin.Type.Declaration{},
+ 			.decls = &.{},
  			.is_tuple = false,
  		},
  	});
