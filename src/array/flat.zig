@@ -1,10 +1,10 @@
 // Flat means no children. Includes Primitive and VariableBinary layouts.
 const std = @import("std");
 const tags = @import("../tags.zig");
-const Tag = tags.Tag;
+const array = @import("./array.zig");
 
 pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
-	const tag = Tag.fromPrimitiveType(T, opts);
+	const tag = tags.Tag.fromPrimitiveType(T, opts);
 	const layout = tag.abiLayout();
 	if (layout != .Primitive and layout != .VariableBinary) {
 		@compileError("unsupported flat type " ++ @typeName(T));
@@ -95,20 +95,16 @@ pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions)
 			return self.appendAny(value);
 		}
 
-		fn numMasks(bit_length: usize) usize {
-			return (bit_length + (@bitSizeOf(tags.MaskInt) - 1)) / @bitSizeOf(tags.MaskInt);
-    }
-
-		pub fn finish(self: *Self) !tags.Array {
+		pub fn finish(self: *Self) !array.Array {
 			return .{
 				.tag = tag,
 				.allocator = self.values.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]array.MaskInt{},
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
-				.children = &[_]tags.Array{}
+				.children = &[_]array.Array{}
 			};
 		}
 	};
@@ -134,7 +130,7 @@ test "primitive optional" {
 	try b.append(4);
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b1101), masks[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b1101), masks[0]);
 }
 
 test "primitive finish" {
@@ -149,7 +145,7 @@ test "primitive finish" {
 	defer a.deinit();
 
 	const masks = a.validity;
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b1101), masks[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b1101), masks[0]);
 	try std.testing.expectEqual(@as(T, 4), a.values_as(T)[3]);
 }
 
@@ -174,7 +170,7 @@ test "varbinary optional" {
 	try b.append(&[_]u8{1,2,3});
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b10), masks[0]);
 }
 
 test "varbinary finish" {
@@ -185,6 +181,6 @@ test "varbinary finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), a.validity[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
 	try std.testing.expectEqual(@as(i32, 'l'), a.values[2]);
 }

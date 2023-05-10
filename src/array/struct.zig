@@ -1,6 +1,7 @@
 // Struct means a child per field. Includes struct layout.
 const std = @import("std");
 const tags = @import("../tags.zig");
+const array = @import("./array.zig");
 const flat = @import("./flat.zig");
 
 fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) type {
@@ -100,13 +101,9 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 			return self.appendAny(value);
 		}
 
-		fn numMasks(bit_length: usize) usize {
-			return (bit_length + (@bitSizeOf(tags.MaskInt) - 1)) / @bitSizeOf(tags.MaskInt);
-    }
-
-		pub fn finish(self: *Self) !tags.Array {
+		pub fn finish(self: *Self) !array.Array {
 			const fields = @typeInfo(ChildrenBuilders).Struct.fields;
-			const children = try self.allocator.alloc(tags.Array, fields.len);
+			const children = try self.allocator.alloc(array.Array, fields.len);
 			inline for (fields, 0..) |f, i| {
 				children[i] = try @field(self.children, f.name).finish();
 			}
@@ -114,7 +111,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 				.tag = tags.Tag{ .struct_ = opts },
 				.allocator = self.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = &[_]u8{},
 				.values = &[_]u8{},
@@ -148,7 +145,7 @@ test "nullable struct advanced with finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), a.validity[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
 }
 
 fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type {
@@ -215,5 +212,5 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b110), a.validity[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b110), a.validity[0]);
 }

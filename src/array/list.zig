@@ -1,5 +1,6 @@
 // List means single child. Includes List and Fixed-Size List layouts.
 const std = @import("std");
+const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 
 pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
@@ -87,18 +88,14 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 			return self.appendAny(value);
 		}
 
-		fn numMasks(bit_length: usize) usize {
-			return (bit_length + (@bitSizeOf(tags.MaskInt) - 1)) / @bitSizeOf(tags.MaskInt);
-    }
-
-		pub fn finish(self: *Self) !tags.Array {
-			const children = try self.child.values.allocator.alloc(tags.Array, 1);
+		pub fn finish(self: *Self) !array.Array {
+			const children = try self.child.values.allocator.alloc(array.Array, 1);
 			children[0] = try self.child.finish();
 			return .{
 				.tag = tags.Tag{ .list = opts },
 				.allocator = self.child.values.allocator,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
+				.validity = if (ValidityList != void) self.validity.unmanaged.masks[0..array.numMasks(self.validity.unmanaged.bit_length)] else &[_]tags.MaskInt{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
 				.values = &[_]u8{},
@@ -145,5 +142,5 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b10), a.validity[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
 }

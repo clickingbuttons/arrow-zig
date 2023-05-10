@@ -1,3 +1,4 @@
+const array = @import("./array.zig");
 const ArrayBuilderAdvanced = @import("./list.zig").ArrayBuilderAdvanced;
 
 pub fn ArrayBuilder(comptime Array: type) type {
@@ -34,5 +35,5 @@ test "finish" {
 	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[0]);
 	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[3]);
 
-	try std.testing.expectEqual(@as(tags.MaskInt, 0b01), a.validity[0]);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b01), a.validity[0]);
 }
