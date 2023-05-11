@@ -51,9 +51,16 @@ pub const Array = extern struct {
 		Dictionary,
 
 		const Self = @This();
+		pub fn hasTypeIds(self: Self) bool {
+			return switch (self) {
+				.SparseUnion, .DenseUnion => true,
+				else => false
+			};
+		}
+
 		pub fn hasValidity(self: Self) bool {
 			return switch (self) {
-				.Primitive, .VariableBinary, .List, .FixedList, .Struct => true,
+				.Primitive, .VariableBinary, .List, .FixedList, .Struct, .Dictionary => true,
 				else => false
 			};
 		}
@@ -65,11 +72,21 @@ pub const Array = extern struct {
 			};
 		}
 
-		pub fn hasItems(self: Self) bool {
+		pub fn hasData(self: Self) bool {
 			return switch (self) {
-				.Primitive, .VariableBinary => true,
+				.Primitive, .VariableBinary, .Dictionary => true,
 				else => false
 			};
+		}
+
+		pub fn nBuffers(self: Self) usize {
+			const res =
+				@intCast(usize, @boolToInt(self.hasTypeIds())) +
+				@intCast(usize, @boolToInt(self.hasValidity())) +
+				@intCast(usize, @boolToInt(self.hasOffsets())) +
+				@intCast(usize, @boolToInt(self.hasData()));
+			std.debug.assert(res <= 3);
+			return res;
 		}
 	};
 };

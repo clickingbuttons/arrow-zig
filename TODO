@@ -13,12 +13,14 @@
 
 ## impl
 - [x] union
-- [ ] dict
+- [x] dict
 
 ## pretty
-- [ ] generic builder
-	- [ ] remove flat from list/union/dict
+- [x] generic builder
+	- [x] remove flat from list/union/dict
 
 ## impl
+- [x] c
+	- [ ] align in abi
 - [ ] flatbuffers
 

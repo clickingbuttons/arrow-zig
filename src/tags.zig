@@ -23,10 +23,10 @@ pub const UnionOptions = struct {
 };
 
 pub const DictIndex = enum {
-	i8,
-	i16,
+	// i64, // Currently zig hashmaps use u32s for capacity.
 	i32,
-	i64
+	i16,
+	i8,
 };
 
 pub const DictOptions = struct {

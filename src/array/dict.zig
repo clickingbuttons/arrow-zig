@@ -3,16 +3,16 @@
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
+const builder = @import("./builder.zig");
 
 // Context and max_load_percentage match std.HashMap.
-pub fn ArrayBuilderAdvanced(
+pub fn BuilderAdvanced(
 	comptime ChildBuilder: type,
 	comptime opts: tags.DictOptions,
 	comptime Context: type,
 	comptime max_load_percentage: u64
 ) type {
 	const IndexType = switch (opts.index) {
-		.i64 => i64,
 		.i32 => i32,
 		.i16 => i16,
 		.i8 => i8,
@@ -97,7 +97,7 @@ pub fn getAutoEqlFn(comptime K: type, comptime Context: type) (fn (Context, K, K
 }
 
 
-fn AutoContext(comptime K: type) type {
+pub fn AutoContext(comptime K: type) type {
 	return struct {
 		pub const hash = getAutoHashFn(K, @This());
 		pub const eql = getAutoEqlFn(K, @This());
@@ -107,8 +107,8 @@ fn AutoContext(comptime K: type) type {
 const flat = @import("./flat.zig");
 test "init + deinit string" {
 	const T = []const u8;
-	var b = try ArrayBuilderAdvanced(
-		flat.ArrayBuilder(T),
+	var b = try BuilderAdvanced(
+		flat.Builder(T),
 		.{ .index = .i8 },
 		AutoContext(T),
 		std.hash_map.default_max_load_percentage
@@ -127,8 +127,8 @@ test "init + deinit string" {
 const list = @import("./list.zig");
 test "init + deinit list" {
 	const T = ?[]const []const u8;
-	var b = try ArrayBuilderAdvanced(
-		list.ArrayBuilder(T),
+	var b = try BuilderAdvanced(
+		list.Builder(T),
 		.{ .index = .i8 },
 		AutoContext(T),
 		std.hash_map.default_max_load_percentage
@@ -147,8 +147,8 @@ test "init + deinit struct" {
 		a: ?i16,
 		b: ?i32,
 	};
-	var b = try ArrayBuilderAdvanced(
-		struct_.ArrayBuilder(T),
+	var b = try BuilderAdvanced(
+		struct_.Builder(T),
 		.{ .index = .i8 },
 		AutoContext(T),
 		std.hash_map.default_max_load_percentage
@@ -165,12 +165,34 @@ test "init + deinit struct" {
 
 test "finish" {
 	const T = ?i8;
-	var b = try ArrayBuilderAdvanced(
-		flat.ArrayBuilder(T),
+	var b = try BuilderAdvanced(
+		flat.Builder(T),
 		.{ .index = .i8 },
 		AutoContext(T),
 		std.hash_map.default_max_load_percentage
 	).init(std.testing.allocator);
+	try b.append(null);
+	try b.append(1);
+
+	const a = try b.finish();
+	defer a.deinit();
+
+	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[0]);
+	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[1]);
+}
+
+pub fn Builder(comptime T: type) type {
+	return BuilderAdvanced(
+		builder.Builder(T),
+		.{ .index = .i16 },
+		AutoContext(T),
+		std.hash_map.default_max_load_percentage
+	);
+}
+
+test "convienence finish" {
+	const T = ?u8;
+	var b = try Builder(T).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(1);
 

@@ -3,7 +3,7 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
 
-pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
+pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
 	const tag = tags.Tag.fromPrimitiveType(T, opts);
 	const layout = tag.abiLayout();
 	if (layout != .Primitive and layout != .VariableBinary) {
@@ -110,19 +110,19 @@ pub fn ArrayBuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions)
 	};
 }
 
-pub fn ArrayBuilder(comptime T: type) type {
-	return ArrayBuilderAdvanced(T, .{ .is_large = false, .is_utf8 = false });
+pub fn Builder(comptime T: type) type {
+	return BuilderAdvanced(T, .{ .is_large = false, .is_utf8 = false });
 }
 
 test "primitive init + deinit" {
-	var b = try ArrayBuilder(i32).init(std.testing.allocator);
+	var b = try Builder(i32).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(32);
 }
 
 test "primitive optional" {
-	var b = try ArrayBuilder(?i32).init(std.testing.allocator);
+	var b = try Builder(?i32).init(std.testing.allocator);
 	defer b.deinit();
 	try b.append(1);
 	try b.append(null);
@@ -135,7 +135,7 @@ test "primitive optional" {
 
 test "primitive finish" {
 	const T = i32;
-	var b = try ArrayBuilder(?T).init(std.testing.allocator);
+	var b = try Builder(?T).init(std.testing.allocator);
 	try b.append(1);
 	try b.append(null);
 	try b.append(2);
@@ -150,21 +150,21 @@ test "primitive finish" {
 }
 
 test "varbinary init + deinit" {
-	var b = try ArrayBuilder([]const u8).init(std.testing.allocator);
+	var b = try Builder([]const u8).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(&[_]u8{1,2,3});
 }
 
 test "varbinary utf8" {
-	var b = try ArrayBuilderAdvanced([]const u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
+	var b = try BuilderAdvanced([]const u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(&[_]u8{1,2,3});
 }
 
 test "varbinary optional" {
-	var b = try ArrayBuilder(?[]const u8).init(std.testing.allocator);
+	var b = try Builder(?[]const u8).init(std.testing.allocator);
 	defer b.deinit();
 	try b.append(null);
 	try b.append(&[_]u8{1,2,3});
@@ -174,7 +174,7 @@ test "varbinary optional" {
 }
 
 test "varbinary finish" {
-	var b = try ArrayBuilder(?[]const u8).init(std.testing.allocator);
+	var b = try Builder(?[]const u8).init(std.testing.allocator);
 	try b.append(null);
 	try b.append("hello");
 
@@ -182,5 +182,29 @@ test "varbinary finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
-	try std.testing.expectEqual(@as(i32, 'l'), a.values[2]);
+	try std.testing.expectEqualStrings("hello", a.values[0..5]);
+}
+
+test "c abi" {
+	var b = try Builder(?[]const u8).init(std.testing.allocator);
+	try b.append(null);
+	try b.append("hello");
+
+	var a = try b.finish();
+	var c = try a.toOwnedAbi();
+	defer c.release.?(@constCast(&c));
+
+	const buf0 = @constCast(c.buffers.?[0].?);
+	try std.testing.expectEqual(@as(array.MaskInt, 0b10), @ptrCast([*]u8, buf0)[0]);
+	try std.testing.expectEqual(@as(i64, 1), c.null_count);
+
+	const buf1 = @constCast(c.buffers.?[1].?);
+	const indices = @ptrCast([*]i32, @alignCast(@alignOf(i32), buf1));
+	try std.testing.expectEqual(@as(i32, 0), indices[0]);
+	try std.testing.expectEqual(@as(i32, 0), indices[1]);
+	try std.testing.expectEqual(@as(i32, 5), indices[2]);
+
+	const buf2 = @constCast(c.buffers.?[2].?);
+	const values = @ptrCast([*]u8, buf2);
+	try std.testing.expectEqualStrings("hello", values[0..5]);
 }

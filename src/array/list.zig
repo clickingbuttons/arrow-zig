@@ -2,8 +2,9 @@
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
+const builder = @import("./builder.zig");
 
-pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
+pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
 	const NullCount = if (opts.is_nullable) i64 else void;
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
@@ -109,29 +110,26 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Lis
 	};
 }
 
-// Support building lists of flat arrays
-// TODO: fix this to work for more than flat arrays
-pub fn ArrayBuilder(comptime Slice: type) type {
+pub fn Builder(comptime Slice: type) type {
 	const is_nullable = @typeInfo(Slice) == .Optional;
 	const Child = if (is_nullable) @typeInfo(Slice).Optional.child else Slice;
 	const t = @typeInfo(Child);
 	if (!(t == .Pointer and t.Pointer.size == .Slice)) {
 		@compileError(@typeName(Slice) ++ " is not a slice type");
 	}
-	const ChildBuilder = flat.ArrayBuilder(t.Pointer.child);
-	return ArrayBuilderAdvanced(ChildBuilder, .{ .is_nullable = is_nullable, .is_large = false }, 0);
+	const ChildBuilder = builder.Builder(t.Pointer.child);
+	return BuilderAdvanced(ChildBuilder, .{ .is_nullable = is_nullable, .is_large = false }, 0);
 }
 
-const flat = @import("./flat.zig");
 test "init + deinit optional child and parent" {
-	var b = try ArrayBuilder([]const ?i8).init(std.testing.allocator);
+	var b = try Builder([]const ?i8).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(&[_]?i8{1,null,3});
 }
 
 test "init + deinit varbinary" {
-	var b = try ArrayBuilder(?[][]const u8).init(std.testing.allocator);
+	var b = try Builder(?[][]const u8).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(null);
@@ -139,7 +137,7 @@ test "init + deinit varbinary" {
 }
 
 test "finish" {
-	var b = try ArrayBuilder(?[]const i8).init(std.testing.allocator);
+	var b = try Builder(?[]const i8).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(&[_]i8{1,2,3});
 

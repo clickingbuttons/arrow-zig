@@ -2,6 +2,7 @@
 const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
+const builder = @import("./builder.zig");
 
 // Per spec
 const TypeId = i8;
@@ -53,7 +54,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
 	return if (is_nullable) ?T else T;
 }
 
-pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.UnionOptions, comptime UnionType: type) type {
+pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.UnionOptions, comptime UnionType: type) type {
 	const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.is_nullable);
 	const TypeList = std.ArrayListAligned(TypeId, 64);
 	const OffsetList = std.ArrayListAligned(i32, 64);
@@ -160,10 +161,10 @@ const flat = @import("./flat.zig");
 
 test "union advanced" {
 	const ChildrenBuilders = struct {
-		key: flat.ArrayBuilder([]const u8),
-		val: flat.ArrayBuilder(i32),
+		key: flat.Builder([]const u8),
+		val: flat.Builder(i32),
 	};
-	var b = try ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false, .is_dense = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false, .is_dense = true }, void).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "asdf" });
@@ -173,10 +174,10 @@ test "union advanced" {
 test "nullable union advanced with finish" {
 	// Straight from example
 	const ChildrenBuilders = struct {
-		f: flat.ArrayBuilder(?f32),
-		i: flat.ArrayBuilder(?i32),
+		f: flat.Builder(?f32),
+		i: flat.Builder(?i32),
 	};
-	var b = try ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = true }, void).init(std.testing.allocator);
 
 	try b.append(.{ .f = 1.2 });
 	try b.append(null);
@@ -197,11 +198,11 @@ test "nullable union advanced with finish" {
 test "nullable spare union advanced with finish" {
 	// Straight from example + an extra null
 	const ChildrenBuilders = struct {
-		i: flat.ArrayBuilder(?i32),
-		f: flat.ArrayBuilder(?f32),
-		s: flat.ArrayBuilder(?[]const u8),
+		i: flat.Builder(?i32),
+		f: flat.Builder(?f32),
+		s: flat.Builder(?[]const u8),
 	};
-	var b = try ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = false }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = false }, void).init(std.testing.allocator);
 
 	try b.append(null);
 	try b.append(.{ .i = 5 });
@@ -229,7 +230,7 @@ fn MakeChildrenBuilders(comptime Union: type, comptime is_nullable: bool) type {
 		}
  		fields[i] = .{
  			.name = f.name,
- 			.type = flat.ArrayBuilder(f.type),
+ 			.type = builder.Builder(f.type),
  			.default_value = null,
  			.is_comptime = false,
  			.alignment = 0,
@@ -245,7 +246,7 @@ fn MakeChildrenBuilders(comptime Union: type, comptime is_nullable: bool) type {
  	});
 }
 
-pub fn ArrayBuilder(comptime Union: type) type {
+pub fn Builder(comptime Union: type) type {
 	const is_nullable = @typeInfo(Union) == .Optional;
 	const Child = if (is_nullable) @typeInfo(Union).Optional.child else Union;
 	const t = @typeInfo(Child);
@@ -254,7 +255,7 @@ pub fn ArrayBuilder(comptime Union: type) type {
 	}
 	const ChildrenBuilders = MakeChildrenBuilders(Child, is_nullable);
 
-	return ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable, .is_dense = true }, Union);
+	return BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable, .is_dense = true }, Union);
 }
 
 test "init + deinit" {
@@ -262,7 +263,7 @@ test "init + deinit" {
 		key: []const u8,
 		val: i32,
 	};
-	var b = try ArrayBuilder(T).init(std.testing.allocator);
+	var b = try Builder(T).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "hello" });

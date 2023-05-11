@@ -34,7 +34,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
 }
 
 // ChildrenBuilders is a struct of { field_name: builder_type }
-pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.PrimitiveOptions, comptime StructType: type) type {
+pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.PrimitiveOptions, comptime StructType: type) type {
 	const NullCount = if (opts.is_nullable) i64 else void;
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
@@ -125,10 +125,10 @@ pub fn ArrayBuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags
 
 test "struct advanced" {
 	const ChildrenBuilders = struct {
-		key: flat.ArrayBuilder([]const u8),
-		val: flat.ArrayBuilder(i32),
+		key: flat.Builder([]const u8),
+		val: flat.Builder(i32),
 	};
-	var b = try ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false }, void).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "asdf", .val = 1 });
@@ -137,10 +137,10 @@ test "struct advanced" {
 
 test "nullable struct advanced with finish" {
 	const ChildrenBuilders = struct {
-		key: flat.ArrayBuilder(?[]const u8),
-		val: flat.ArrayBuilder(?i32),
+		key: flat.Builder(?[]const u8),
+		val: flat.Builder(?i32),
 	};
-	var b = try ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true }, void).init(std.testing.allocator);
 
 	try b.append(null);
 	try b.append(.{ .key = "asdf", .val = 1 });
@@ -161,7 +161,7 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type 
 		}
  		fields[i] = .{
  			.name = f.name,
- 			.type = flat.ArrayBuilder(f.type),
+ 			.type = flat.Builder(f.type),
  			.default_value = null,
  			.is_comptime = false,
  			.alignment = 0,
@@ -177,7 +177,7 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type 
  	});
 }
 
-pub fn ArrayBuilder(comptime Struct: type) type {
+pub fn Builder(comptime Struct: type) type {
 	const is_nullable = @typeInfo(Struct) == .Optional;
 	const Child = if (is_nullable) @typeInfo(Struct).Optional.child else Struct;
 	const t = @typeInfo(Child);
@@ -186,7 +186,7 @@ pub fn ArrayBuilder(comptime Struct: type) type {
 	}
 	const ChildrenBuilders = MakeChildrenBuilders(Child, is_nullable);
 
-	return ArrayBuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable }, Struct);
+	return BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable }, Struct);
 }
 
 test "init + deinit" {
@@ -194,7 +194,7 @@ test "init + deinit" {
 		key: []const u8,
 		val: i32,
 	};
-	var b = try ArrayBuilder(T).init(std.testing.allocator);
+	var b = try Builder(T).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "hello", .val = 1 });
@@ -206,7 +206,7 @@ test "finish" {
 		key: ?[]const u8,
 		val: ?i32,
 	};
-	var b = try ArrayBuilder(?T).init(std.testing.allocator);
+	var b = try Builder(?T).init(std.testing.allocator);
 
 	try b.append(null);
 	try b.append(.{ .key = "hello", .val = 1 });
