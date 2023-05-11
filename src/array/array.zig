@@ -68,10 +68,10 @@ pub const null_array = Array {
 		}
 	},
 	.null_count = 0,
-	.validity = &[_]MaskInt{},
-	.offsets = &[_]u8{},
-	.values = &[_]u8{},
-	.children = &[_]Array{},
+	.validity = &.{},
+	.offsets = &.{},
+	.values = &.{},
+	.children = &.{},
 };
 
 test "null array" {

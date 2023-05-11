@@ -4,7 +4,13 @@ const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 
-pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.DictOptions) type {
+// Context and max_load_percentage match std.HashMap.
+pub fn ArrayBuilderAdvanced(
+	comptime ChildBuilder: type,
+	comptime opts: tags.DictOptions,
+	comptime Context: type,
+	comptime max_load_percentage: u64
+) type {
 	const IndexType = switch (opts.index) {
 		.i64 => i64,
 		.i32 => i32,
@@ -14,7 +20,7 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Dic
 	const IndexList = std.ArrayListAligned(IndexType, 64);
 
 	const AppendType = ChildBuilder.Type();
-	const HashMap = std.AutoHashMap(AppendType, IndexType);
+	const HashMap = std.HashMap(AppendType, IndexType, Context, max_load_percentage);
 
 	return struct {
 		const Self = @This();
@@ -51,12 +57,15 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Dic
 		}
 
 		pub fn finish(self: *Self) !array.Array {
-			const children = try self.child.values.allocator.alloc(array.Array, 1);
+			const allocator = self.hashmap.allocator;
+			const children = try allocator.alloc(array.Array, 1);
 			children[0] = try self.child.finish();
+			self.hashmap.deinit();
 			return .{
 				.tag = tags.Tag{ .dictionary = opts },
-				.allocator = self.child.values.allocator,
+				.allocator = allocator,
 				.null_count = 0,
+				.validity = &.{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = &.{},
 				.values = std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
@@ -66,19 +75,71 @@ pub fn ArrayBuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.Dic
 	};
 }
 
+pub fn getAutoHashFn(comptime K: type, comptime Context: type) (fn (Context, K) u64) {
+	return struct {
+		fn hash(ctx: Context, key: K) u64 {
+			_ = ctx;
+			var hasher = std.hash.Wyhash.init(0);
+			std.hash.autoHashStrat(&hasher, key, .Deep); // Look at slice contents.
+			return hasher.final();
+		}
+	}.hash;
+}
+
+pub fn getAutoEqlFn(comptime K: type, comptime Context: type) (fn (Context, K, K) bool) {
+	return struct {
+		fn eql(ctx: Context, a: K, b: K) bool {
+			_ = ctx;
+			// TODO: handle slices
+			return std.meta.eql(a, b);
+		}
+	}.eql;
+}
+
+
+fn AutoContext(comptime K: type) type {
+	return struct {
+		pub const hash = getAutoHashFn(K, @This());
+		pub const eql = getAutoEqlFn(K, @This());
+	};
+}
+
 const flat = @import("./flat.zig");
-// test "init + deinit string" {
-// 	var b = try ArrayBuilderAdvanced(flat.ArrayBuilder([]const u8), .{ .index = .i8 }).init(std.testing.allocator);
-// 	defer b.deinit();
-// 
-// 	try b.append("asdf");
-// 	try b.append("ff");
-// 	try b.append("asdf");
-// 	try b.append("ff");
-// 	try b.append("gg");
-// 
-//  	try std.testing.expectEqual(@as(usize, 3), b.hashmap.count());
-// }
+test "init + deinit string" {
+	const T = []const u8;
+	var b = try ArrayBuilderAdvanced(
+		flat.ArrayBuilder(T),
+		.{ .index = .i8 },
+		AutoContext(T),
+		std.hash_map.default_max_load_percentage
+		).init(std.testing.allocator);
+	defer b.deinit();
+
+	try b.append("asdf");
+	try b.append("ff");
+	try b.append("asdf");
+	try b.append("ff");
+	try b.append("gg");
+
+	try std.testing.expectEqual(@as(usize, 3), b.hashmap.count());
+}
+
+const list = @import("./list.zig");
+test "init + deinit list" {
+	const T = ?[]const []const u8;
+	var b = try ArrayBuilderAdvanced(
+		list.ArrayBuilder(T),
+		.{ .index = .i8 },
+		AutoContext(T),
+		std.hash_map.default_max_load_percentage
+		).init(std.testing.allocator);
+	defer b.deinit();
+
+	try b.append(null);
+	try b.append(&[_][]const u8{"hello", "goodbye"});
+
+ 	try std.testing.expectEqual(@as(usize, 2), b.hashmap.count());
+}
 
 const struct_ = @import("./struct.zig");
 test "init + deinit struct" {
@@ -86,7 +147,12 @@ test "init + deinit struct" {
 		a: ?i16,
 		b: ?i32,
 	};
-	var b = try ArrayBuilderAdvanced(struct_.ArrayBuilder(T), .{ .index = .i8 }).init(std.testing.allocator);
+	var b = try ArrayBuilderAdvanced(
+		struct_.ArrayBuilder(T),
+		.{ .index = .i8 },
+		AutoContext(T),
+		std.hash_map.default_max_load_percentage
+	).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .a = 4, .b = 1 });
@@ -97,21 +163,20 @@ test "init + deinit struct" {
  	try std.testing.expectEqual(@as(usize, 2), b.hashmap.count());
 }
 
-// test "init + deinit varbinary" {
-// 	var b = try ArrayBuilder(?[][]const u8).init(std.testing.allocator);
-// 	defer b.deinit();
-// 
-// 	try b.append(null);
-// 	try b.append(&[_][]const u8{"hello", "goodbye"});
-// }
-// 
-// test "finish" {
-// 	var b = try ArrayBuilder(?[]const i8).init(std.testing.allocator);
-// 	try b.append(null);
-// 	try b.append(&[_]i8{1,2,3});
-// 
-// 	const a = try b.finish();
-// 	defer a.deinit();
-// 
-// 	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
-// }
+test "finish" {
+	const T = ?i8;
+	var b = try ArrayBuilderAdvanced(
+		flat.ArrayBuilder(T),
+		.{ .index = .i8 },
+		AutoContext(T),
+		std.hash_map.default_max_load_percentage
+	).init(std.testing.allocator);
+	try b.append(null);
+	try b.append(1);
+
+	const a = try b.finish();
+	defer a.deinit();
+
+	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[0]);
+	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[1]);
+}
