@@ -5,7 +5,7 @@ const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
 pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
-	const NullCount = if (opts.is_nullable) i64 else void;
+	const NullCount = if (opts.is_nullable) usize else void;
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
 	const OffsetType = if (opts.is_large) i64 else i32;
@@ -96,14 +96,22 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 		pub fn finish(self: *Self) !array.Array {
 			const children = try self.child.values.allocator.alloc(array.Array, 1);
 			children[0] = try self.child.finish();
+			const tag = if (fixed_len == 0)
+				tags.Tag{ .list = opts }
+			else tags.Tag { .list_fixed = .{
+				.is_nullable = opts.is_nullable,
+				.fixed_len = @intCast(i16, fixed_len),
+				.is_large = opts.is_large
+			} };
 			return .{
-				.tag = tags.Tag{ .list = opts },
+				.tag = tag,
 				.allocator = self.child.values.allocator,
+				.length = if (OffsetList != void) self.offsets.items.len - 1 else self.child.values.items.len,
 				.null_count = if (NullCount != void) self.null_count else 0,
 				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]tags.MaskInt{},
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
-				.values = &[_]u8{},
+				.values = &.{},
 				.children = children,
 			};
 		}

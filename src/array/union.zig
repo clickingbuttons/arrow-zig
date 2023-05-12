@@ -146,6 +146,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 			return .{
 				.tag = tags.Tag{ .union_ = opts },
 				.allocator = self.allocator,
+				.length = self.types.items.len,
 				.null_count = 0,
 				.validity = &.{},
 				// TODO: implement @ptrCast between slices changing the length
@@ -184,7 +185,7 @@ test "nullable union advanced with finish" {
 	try b.append(.{ .f = 3.4 });
 	try b.append(.{ .i = 5 });
 
-	const a = try b.finish();
+	var a = try b.finish();
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(u8, 0), a.values[0]);
@@ -195,7 +196,40 @@ test "nullable union advanced with finish" {
 	try std.testing.expectEqual(@as(usize, 0), a.children[1].validity.len);
 }
 
-test "nullable spare union advanced with finish" {
+test "nullable union advanced with abi finish" {
+	// Straight from example
+	const ChildrenBuilders = struct {
+		f: flat.Builder(?f32),
+		i: flat.Builder(?i32),
+	};
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = true }, void).init(std.testing.allocator);
+
+	try b.append(.{ .f = 1.2 });
+	try b.append(null);
+	try b.append(.{ .f = 3.4 });
+	try b.append(.{ .i = 5 });
+
+	var a = try b.finish();
+	var arr = try a.toOwnedAbi();
+	defer arr.release.?(@constCast(&arr));
+
+	try std.testing.expectEqual(@as(i64, 2), arr.n_buffers);
+	try std.testing.expectEqual(@as(i64, 2), arr.n_children);
+	const values = @ptrCast([*]const u8, arr.buffers.?[0].?);
+	const validity = @ptrCast([*]const u8, arr.children.?[0].buffers.?[0].?);
+	try std.testing.expectEqual(@as(u8, 0), values[0]);
+	try std.testing.expectEqual(@as(u8, 0), values[1]);
+	try std.testing.expectEqual(@as(u8, 0), values[2]);
+	try std.testing.expectEqual(@as(u8, 1), values[3]);
+	try std.testing.expectEqual(@as(u8, 0b0101), validity[0]);
+
+	const s = try a.ownedSchema("c1");
+	defer s.release.?(@constCast(&s));
+
+	try std.testing.expectEqualStrings("+ud:0,1\x00", s.format[0..8]);
+}
+
+test "nullable sparse union advanced with finish" {
 	// Straight from example + an extra null
 	const ChildrenBuilders = struct {
 		i: flat.Builder(?i32),

@@ -29,7 +29,7 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(i64, 1), a.null_count);
+	try std.testing.expectEqual(@as(usize, 1), a.null_count);
 	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[0]);
 	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[3]);
 

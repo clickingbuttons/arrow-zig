@@ -2,9 +2,9 @@ const std = @import("std");
 
 // https://arrow.apache.org/docs/format/CDataInterface.html#structure-definitions
 pub const Schema = extern struct {
-	format: [*]const u8, // Managed
-	name: [*]const u8 = &[_]u8{0}, // Managed
-	metadata: [*]const u8 = &[_]u8{0}, // Managed
+	format: [*:0]const u8, // Managed
+	name: ?[*:0]const u8 = null, // Managed
+	metadata: ?[*:0]const u8 = null, // Managed
 	flags: packed struct(i64) {
 		dictionary_ordered: bool = false,
 		nullable: bool = false,
@@ -28,6 +28,7 @@ pub const Array = extern struct {
 	offset: i64 = 0,
 	n_buffers: i64,
 	n_children: i64 = 0,
+	// TODO: alignment?
 	buffers: ?[*]?*const anyopaque = null, // Managed
 	children: ?[*]*Array = null, // Managed
 	dictionary: ?*Array = null, // Managed

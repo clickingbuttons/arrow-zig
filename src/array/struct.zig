@@ -35,7 +35,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
 
 // ChildrenBuilders is a struct of { field_name: builder_type }
 pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.PrimitiveOptions, comptime StructType: type) type {
-	const NullCount = if (opts.is_nullable) i64 else void;
+	const NullCount = if (opts.is_nullable) usize else void;
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
 	const AppendType = if (StructType != void) StructType else MakeAppendType(ChildrenBuilders, opts.is_nullable);
@@ -112,6 +112,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 			return .{
 				.tag = tags.Tag{ .struct_ = opts },
 				.allocator = self.allocator,
+				.length = children[0].length,
 				.null_count = if (NullCount != void) self.null_count else 0,
 				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
 				// TODO: implement @ptrCast between slices changing the length

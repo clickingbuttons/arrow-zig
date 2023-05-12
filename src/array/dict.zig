@@ -64,6 +64,7 @@ pub fn BuilderAdvanced(
 			return .{
 				.tag = tags.Tag{ .dictionary = opts },
 				.allocator = allocator,
+				.length = self.indices.items.len,
 				.null_count = 0,
 				.validity = &.{},
 				// TODO: implement @ptrCast between slices changing the length

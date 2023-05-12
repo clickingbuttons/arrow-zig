@@ -16,9 +16,14 @@ pub const ListOptions = struct {
 	is_large: bool = false,
 };
 
-pub const UnionOptions = struct {
-	// https://arrow.apache.org/docs/format/Columnar.html#union-layout
+pub const FixedListOptions = struct {
 	is_nullable: bool,
+	fixed_len: i16,
+	is_large: bool = false,
+};
+
+pub const UnionOptions = struct {
+	is_nullable: bool, // Just used for zig type safety.
 	is_dense: bool = true,
 };
 
@@ -57,7 +62,7 @@ pub const Tag = union(enum) {
 	binary: BinaryOptions,
 	// FixedSizeBinary(i32),
 	list: ListOptions,
-	list_fixed: PrimitiveOptions,
+	list_fixed: FixedListOptions,
 	struct_: PrimitiveOptions,
 	union_: UnionOptions,
 	dictionary: DictOptions,
@@ -67,7 +72,7 @@ pub const Tag = union(enum) {
 	// RunEndEncoded(FieldRef, FieldRef),
 
 	const Self = @This();
-	pub fn fromPrimitiveType(comptime T: type, comptime opts: BinaryOptions) Self {
+	pub fn fromPrimitive(comptime T: type, comptime opts: BinaryOptions) Self {
 		const is_nullable = @typeInfo(T) == .Optional;
 		const ChildType = if (is_nullable) @typeInfo(T).Optional.child else T;
 		const primitive_opts = PrimitiveOptions { .is_nullable = is_nullable };
@@ -112,15 +117,14 @@ pub const Tag = union(enum) {
 	}
 
 	test "tag types" {
-		try std.testing.expectEqual(Tag.u8, Tag.fromPrimitiveType(u8, .{}));
-		try std.testing.expectEqual(Tag.i32, Tag.fromPrimitiveType(?i32, .{}));
-		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitiveType([]u8, .{}));
-		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitiveType([]?u8, .{}));
+		try std.testing.expectEqual(Tag.u8, Tag.fromPrimitive(u8, .{}));
+		try std.testing.expectEqual(Tag.i32, Tag.fromPrimitive(?i32, .{}));
+		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitive([]u8, .{}));
+		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitive([]?u8, .{}));
 	}
 
-	pub fn ValueType(comptime self: Self) type {
+	pub fn Primitive(comptime self: Self) type {
 		return switch (self) {
-			.null, .list, .list_fixed, .struct_, .union_, .dictionary => void,
 			.bool => bool,
 			.i64 => i64,
 			.i32 => i32,
@@ -133,6 +137,7 @@ pub const Tag = union(enum) {
 			.f64 => f64,
 			.f32 => f32,
 			.f16 => f16,
+			else => @compileError(@tagName(self) ++ " is not a primitive")
 		};
 	}
 
@@ -151,7 +156,7 @@ pub const Tag = union(enum) {
 		};
 	}
 
-	pub fn abiFormat(self: Self) []const u8 {
+	pub fn abiFormat(self: Self, allocator: std.mem.Allocator, n_children: usize) ![*:0]const u8 {
 		return switch (self) {
 			.null => "n",
 			.bool => "b",
@@ -166,15 +171,49 @@ pub const Tag = union(enum) {
 			.f64 => "g",
 			.f32 => "f",
 			.f16 => "e",
-			.binary => |b| switch (b.is_unicode) {
+			.binary => |b| switch (b.is_utf8) {
 				true => if (b.is_large) "U" else "u",
 				false => if (b.is_large) "Z" else "z",
 			},
 			.list => "+l",
-			.list_fixed => "+w",
+			.list_fixed => |l| @ptrCast([*:0]const u8, (try std.fmt.allocPrint(allocator, "+w:{d}\\0", .{ l.fixed_len })).ptr),
 			.struct_ => "+s",
-			.union_ => |u| if (u.is_dense) "+ud" else "+us",
-			.dictionary => |d| abiFormat(@field(Self, @tagName(d)))
+			.union_ => |u| brk: {
+				const prefix = if (u.is_dense) "+ud:" else "+us:";
+				var res = std.ArrayList(u8).init(allocator);
+				try res.writer().print("{s}", .{ prefix });
+				for (0..n_children) |i| {
+					if (i != n_children - 1) {
+						try res.writer().print("{d},", .{ i });
+					} else {
+						try res.writer().print("{d}", .{ i });
+					}
+				}
+				try res.append(0);
+				break :brk @ptrCast([*:0]const u8, res.items.ptr);
+			},
+			.dictionary => |d| switch (d.index) {
+				.i32 => "i",
+				.i16 => "s",
+				.i8 => "c",
+			}
+		};
+	}
+
+	pub fn isAbiFormatOnHeap(self: Self) bool {
+		return switch (self) {
+			.list_fixed, .union_ => true,
+			else => false
+		};
+	}
+
+	pub fn isNullable(self: Self) bool {
+		return switch (self) {
+			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, .struct_ => |opts| opts.is_nullable,
+			.list_fixed => |opts| opts.is_nullable,
+			.list => |opts| opts.is_nullable,
+			.union_ => |opts| opts.is_nullable,
+			else => false
 		};
 	}
 };

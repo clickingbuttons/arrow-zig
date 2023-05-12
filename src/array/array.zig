@@ -7,7 +7,8 @@ pub const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
 pub const Array = struct {
 	tag: tags.Tag, // 1
 	allocator: std.mem.Allocator, // 2
-	null_count: i64, // 1
+	length: usize, // 1
+	null_count: usize, // 1
 	// TODO: align(64)
 	validity: []MaskInt, // 2
 	offsets: []align(64) u8, // 2
@@ -18,12 +19,12 @@ pub const Array = struct {
 
 	fn arrayRelease(arr: *abi.Array) callconv(.C) void {
 		const self = @ptrCast(*Self, @alignCast(@alignOf(Self), arr.private_data));
-		self.deinit();
 		if (arr.buffers) |buffers| {
 			self.allocator.free(buffers[0..@intCast(usize, arr.n_buffers)]);
 		}
 		if (arr.children) |children| {
 			for (0..@intCast(usize, arr.n_children)) |i| {
+				children[i].release.?(children[i]);
 				self.allocator.destroy(children[i]);
 			}
 			self.allocator.free(children[0..@intCast(usize, arr.n_children)]);
@@ -31,12 +32,15 @@ pub const Array = struct {
 		if (arr.dictionary) |dictionary| {
 			self.allocator.destroy(dictionary);
 		}
+		self.deinit2(false);
 		arr.*.release = null;
 	}
 
-	pub fn deinit(self: Self) void {
-		for (self.children) |c| {
-			c.deinit();
+	fn deinit2(self: Self, comptime free_children: bool) void {
+		if (free_children) {
+			for (self.children) |c| {
+				c.deinit();
+			}
 		}
 
 		// See bit_set.zig#deinit
@@ -54,6 +58,10 @@ pub const Array = struct {
 		if (self.children.len > 0) {
 			self.allocator.free(self.children);
 		}
+	}
+
+	pub fn deinit(self: Self) void {
+		self.deinit2(true);
 	}
 
 	pub fn values_as(self: Self, comptime T: type) []T {
@@ -126,8 +134,8 @@ pub const Array = struct {
 		const n_children = if (layout == .Dictionary) 0 else self.children.len;
 
 		return .{
-			// .length = i64 = 0,
-			.null_count = self.null_count,
+			.length = @intCast(i64, self.length),
+			.null_count = @intCast(i64, self.null_count),
 			.offset = 0,
 			.n_buffers = @intCast(i64, n_buffers),
 			.n_children = @intCast(i64, n_children),
@@ -138,13 +146,88 @@ pub const Array = struct {
 			.private_data = @ptrCast(?*anyopaque, self),
 		};
 	}
+
+	fn schemaRelease(schema: *abi.Schema) callconv(.C) void {
+		const self = @ptrCast(*Self, @alignCast(@alignOf(Self), schema.private_data));
+		if (schema.children) |children| {
+			for (0..@intCast(usize, schema.n_children)) |i| {
+				self.allocator.destroy(children[i]);
+			}
+			self.allocator.free(children[0..@intCast(usize, schema.n_children)]);
+		}
+		if (schema.dictionary) |dictionary| {
+			self.allocator.destroy(dictionary);
+		}
+		if (schema.name) |name| {
+			// TODO: maybe store this somewhere for faster frees?
+			const len = std.mem.indexOfSentinel(u8, 0, name) + 1;
+			self.allocator.free(name[0..len]);
+		}
+		if (self.tag.isAbiFormatOnHeap()) {
+			// TODO: maybe store this somewhere for faster frees?
+			const len = std.mem.indexOfSentinel(u8, 0, schema.format) + 1;
+			self.allocator.free(schema.format[0..len]);
+		}
+		schema.*.release = null;
+	}
+
+	fn abiSchemaChildren(self: Self, n_children: usize) std.mem.Allocator.Error!?[*]*abi.Schema {
+		if (n_children == 0) {
+			return null;
+		}
+		const children = try self.allocator.alloc(*abi.Schema, n_children);
+		for (0..n_children) |j| {
+			children[j] = try self.allocator.create(abi.Schema);
+			children[j].* = try self.children[j].ownedSchema("");
+		}
+
+		return @ptrCast(?[*]*abi.Schema, children);
+	}
+
+	fn abiSchemaDictionary(self: Self, layout: abi.Array.Layout) std.mem.Allocator.Error!?*abi.Schema {
+		if (layout != .Dictionary) {
+			return null;
+		}
+
+		var dictionary = try self.allocator.create(abi.Schema);
+		dictionary.* = try self.children[0].ownedSchema("");
+
+		return @ptrCast(?*abi.Schema, dictionary);
+	}
+
+	fn ownedSchema2(self: *Self, name: anytype, comptime copy_name: bool) std.mem.Allocator.Error!abi.Schema {
+		const layout = self.tag.abiLayout();
+		const n_children = if (layout == .Dictionary) 0 else self.children.len;
+
+		return .{
+			.format = try self.tag.abiFormat(self.allocator, n_children),
+			.name = if (copy_name and name != null) try self.allocator.dupeZ(u8, name.?) else null,
+			.metadata = null,
+			.flags = .{
+				.nullable = self.tag.isNullable(),
+			},
+			.n_children = @intCast(i64, n_children),
+			.children = try self.abiSchemaChildren(n_children),
+			.dictionary = try self.abiSchemaDictionary(layout),
+			.release = schemaRelease,
+			.private_data = @ptrCast(?*anyopaque, self),
+		};
+	}
+
+	pub fn ownedSchemaCopyName(self: *Self, name: ?[]u8) std.mem.Allocator.Error!abi.Schema {
+		return self.ownedSchema2(name, true);
+	}
+
+	pub fn ownedSchema(self: *Self, name: ?[]const u8) std.mem.Allocator.Error!abi.Schema {
+		return self.ownedSchema2(name, false);
+	}
 };
 
 fn numMasks(bit_length: usize) usize {
 	return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
 }
 
-pub fn validity(bit_set: *std.bit_set.DynamicBitSet, null_count: i64) []MaskInt {
+pub fn validity(bit_set: *std.bit_set.DynamicBitSet, null_count: usize) []MaskInt {
 	if (null_count == 0) {
 		bit_set.deinit();
 		return &.{};
@@ -167,6 +250,7 @@ pub const null_array = Array {
 			.free = free,
 		}
 	},
+	.length = 0,
 	.null_count = 0,
 	.validity = &.{},
 	.offsets = &.{},
@@ -185,4 +269,9 @@ test "null array abi" {
 	const c = try n.toOwnedAbi();
 	defer c.release.?(@constCast(&c));
 	try std.testing.expectEqual(@as(i64, 0), c.null_count);
+
+	const s = try n.ownedSchema("c1");
+	defer s.release.?(@constCast(&s));
+	try std.testing.expectEqualStrings("n\x00", s.format[0..2]);
+	try std.testing.expectEqual(@as(i64, 0), s.n_children);
 }

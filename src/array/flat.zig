@@ -4,16 +4,16 @@ const tags = @import("../tags.zig");
 const array = @import("./array.zig");
 
 pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
-	const tag = tags.Tag.fromPrimitiveType(T, opts);
+	const tag = tags.Tag.fromPrimitive(T, opts);
 	const layout = tag.abiLayout();
 	if (layout != .Primitive and layout != .VariableBinary) {
 		@compileError("unsupported flat type " ++ @typeName(T));
 	}
 
-	const NullCount = if (@typeInfo(T) == .Optional) i64 else void;
+	const NullCount = if (@typeInfo(T) == .Optional) usize else void;
 	// TODO: does this need to be 64 byte aligned?
 	const ValidityList = if (@typeInfo(T) == .Optional) std.bit_set.DynamicBitSet else void;
-	const ValueType = tag.ValueType();
+	const ValueType = tag.Primitive();
 
 	const OffsetType = if (opts.is_large) i64 else i32;
 	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, 64) else void;
@@ -99,9 +99,10 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return .{
 				.tag = tag,
 				.allocator = self.values.allocator,
+				.length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]array.MaskInt{},
-				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
+				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
+				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &.{},
 				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
 				.children = &[_]array.Array{}
@@ -207,4 +208,9 @@ test "c abi" {
 	const buf2 = @constCast(c.buffers.?[2].?);
 	const values = @ptrCast([*]u8, buf2);
 	try std.testing.expectEqualStrings("hello", values[0..5]);
+
+	var cname: [2]u8 = "c1".*;
+	var s = try a.ownedSchemaCopyName(&cname);
+	defer s.release.?(@constCast(&s));
+	try std.testing.expectEqualStrings(&cname, s.name.?[0..cname.len]);
 }
