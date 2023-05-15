@@ -5,6 +5,7 @@ const builder = @import("./array/builder.zig");
 const flat = @import("./array/flat.zig");
 const struct_ = @import("./array/struct.zig");
 const dict = @import("./array/dict.zig");
+const union_ = @import("./array/union.zig");
 
 pub const Array = array.Array;
 pub const Builder = builder.Builder;
@@ -19,6 +20,10 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 		a: ?i32,
 		b: ?i8,
 	};
+	const UnionChildrenBuilders = struct {
+		i: flat.Builder(?i32),
+		f: flat.Builder(?f32),
+	};
 	const T = struct {
 		a: flat.BuilderAdvanced(?[]const u8, .{ .is_large = false, .is_utf8 = true }),
 		b: Builder(?i32),
@@ -26,7 +31,8 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 		d: Builder(?[2]i32),
 		e: Builder(?StructT),
 		f: Builder(?UnionT),
-		g: dict.Builder(?u8),
+		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .is_nullable = true, .is_dense = false }, void),
+		h: dict.Builder(?u8),
 	};
 	var b = try struct_.BuilderAdvanced(T, .{ .is_nullable = true }, void).init(allocator);
 	{
@@ -40,7 +46,8 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 			.d = [_]i32{3,4},
 			.e = StructT{ .a = 3, .b = 6 },
 			.f = UnionT{ .a = 3 },
-			.g = 3,
+			.g = .{ .i = 3 },
+			.h = 3,
 		});
 		try b.append(.{
 			.a = "goodbye",
@@ -49,7 +56,8 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 			.d = [_]i32{5,6},
 			.e = .{ .a = 4, .b = 7 },
 			.f = .{ .b = 4 },
-			.g = 4,
+			.g = .{ .f = 1.2 },
+			.h = 4,
 		});
 	}
 
@@ -88,5 +96,5 @@ test "abi" {
 	defer arr.release.?(&arr);
 	defer schema.release.?(&schema);
 	
-	try std.testing.expectEqual(@as(i64, 7), schema.n_children);
+	try std.testing.expectEqual(@as(i64, 8), schema.n_children);
 }

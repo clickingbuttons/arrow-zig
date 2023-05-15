@@ -57,7 +57,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
 pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.UnionOptions, comptime UnionType: type) type {
 	const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.is_nullable);
 	const TypeList = std.ArrayListAligned(TypeId, 64);
-	const OffsetList = std.ArrayListAligned(i32, 64);
+	const OffsetList = if (opts.is_dense) std.ArrayListAligned(i32, 64) else void;
 
 	return struct {
 		const Self = @This();
@@ -80,14 +80,14 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 			return .{
 				.allocator = allocator,
 				.types = TypeList.init(allocator),
-				.offsets = OffsetList.init(allocator),
+				.offsets = if (OffsetList != void) OffsetList.init(allocator) else {},
 				.children = children,
 			};
 		}
 
 		pub fn deinit(self: *Self) void {
 			self.types.deinit();
-			self.offsets.deinit();
+			if (OffsetList != void) self.offsets.deinit();
 			inline for (@typeInfo(ChildrenBuilders).Struct.fields) |f| {
 				@field(self.children, f.name).deinit();
 			}
@@ -96,12 +96,12 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 		fn appendAny(self: *Self, value: anytype) std.mem.Allocator.Error!void {
 			return switch (@typeInfo(@TypeOf(value))) {
 				.Null => {
+					const num = 0;
+					try self.types.append(num);
 					if (opts.is_dense) {
-						const num = 0;
 						const first_field = @typeInfo(ChildrenBuilders).Struct.fields[num];
 						var child_builder = &@field(self.children, first_field.name);
 
-						try self.types.append(num);
 						try self.offsets.append(@intCast(i32, child_builder.values.items.len));
 						try child_builder.append(null);
 					} else {
@@ -119,10 +119,10 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 				},
 				.Union => switch(value) {
 					inline else => |_, tag| {
+						try self.types.append(@enumToInt(tag));
 						if (opts.is_dense) {
 							var child_builder = &@field(self.children, @tagName(tag));
 
-							try self.types.append(@enumToInt(tag));
 							try self.offsets.append(@intCast(i32, child_builder.values.items.len));
 							try child_builder.append(@field(value, @tagName(tag)));
 						} else {
@@ -156,7 +156,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 				.null_count = 0,
 				.validity = &.{},
 				// TODO: implement @ptrCast between slices changing the length
-				.offsets = std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()),
+				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &.{},
 				.values = std.mem.sliceAsBytes(try self.types.toOwnedSlice()),
 				.children = children,
 			};
@@ -259,6 +259,8 @@ test "nullable sparse union advanced with finish" {
 	try std.testing.expectEqual(@as(array.MaskInt, 0b0100010), a.children[0].validity[0]);
 	try std.testing.expectEqual(@as(array.MaskInt, 0b0010100), a.children[1].validity[0]);
 	try std.testing.expectEqual(@as(array.MaskInt, 0b1001000), a.children[2].validity[0]);
+
+	try std.testing.expectEqualSlices(u8, &[_]u8{0, 0, 1, 2, 1, 0, 2 }, a.values);
 }
 
 fn MakeChildrenBuilders(comptime Union: type, comptime is_nullable: bool) type {
