@@ -176,7 +176,7 @@ pub const Tag = union(enum) {
 				false => if (b.is_large) "Z" else "z",
 			},
 			.list => "+l",
-			.list_fixed => |l| @ptrCast([*:0]const u8, (try std.fmt.allocPrint(allocator, "+w:{d}\\0", .{ l.fixed_len })).ptr),
+			.list_fixed => |l| @ptrCast([*:0]const u8, (try std.fmt.allocPrint(allocator, "+w:{d}\x00", .{ l.fixed_len })).ptr),
 			.struct_ => "+s",
 			.union_ => |u| brk: {
 				const prefix = if (u.is_dense) "+ud:" else "+us:";

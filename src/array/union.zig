@@ -67,6 +67,10 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 		offsets: OffsetList,
 		children: ChildrenBuilders,
 
+		pub fn Type() type {
+			return AppendType;
+		}
+
 		pub fn init(allocator: std.mem.Allocator) !Self {
 			var children: ChildrenBuilders = undefined;
 			inline for (@typeInfo(ChildrenBuilders).Struct.fields) |f| {
@@ -137,14 +141,16 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !array.Array {
+		pub fn finish(self: *Self) !*array.Array {
 			const fields = @typeInfo(ChildrenBuilders).Struct.fields;
-			const children = try self.allocator.alloc(array.Array, fields.len);
+			const children = try self.allocator.alloc(*array.Array, fields.len);
 			inline for (fields, 0..) |f, i| {
 				children[i] = try @field(self.children, f.name).finish();
 			}
-			return .{
+			var res = try array.Array.init(self.allocator);
+			res.* = .{
 				.tag = tags.Tag{ .union_ = opts },
+				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = self.types.items.len,
 				.null_count = 0,
@@ -154,6 +160,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 				.values = std.mem.sliceAsBytes(try self.types.toOwnedSlice()),
 				.children = children,
 			};
+			return res;
 		}
 	};
 }
@@ -223,7 +230,7 @@ test "nullable union advanced with abi finish" {
 	try std.testing.expectEqual(@as(u8, 1), values[3]);
 	try std.testing.expectEqual(@as(u8, 0b0101), validity[0]);
 
-	const s = try a.ownedSchema("c1");
+	const s = try a.ownedSchema();
 	defer s.release.?(@constCast(&s));
 
 	try std.testing.expectEqualStrings("+ud:0,1\x00", s.format[0..8]);

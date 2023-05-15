@@ -93,8 +93,17 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !array.Array {
-			const children = try self.child.values.allocator.alloc(array.Array, 1);
+		fn len(self: *Self) usize {
+			if (OffsetList != void) {
+				return self.offsets.items.len - 1;
+			}
+			return self.child.values.items.len / @intCast(usize, fixed_len);
+		}
+
+		pub fn finish(self: *Self) !*array.Array {
+			const length = self.len();
+			const allocator = self.child.values.allocator;
+			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
 			const tag = if (fixed_len == 0)
 				tags.Tag{ .list = opts }
@@ -103,10 +112,13 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 				.fixed_len = @intCast(i16, fixed_len),
 				.is_large = opts.is_large
 			} };
-			return .{
+
+			var res = try array.Array.init(allocator);
+			res.* = .{
 				.tag = tag,
+				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.child.values.allocator,
-				.length = if (OffsetList != void) self.offsets.items.len - 1 else self.child.values.items.len,
+				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
 				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]tags.MaskInt{},
 				// TODO: implement @ptrCast between slices changing the length
@@ -114,6 +126,7 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 				.values = &.{},
 				.children = children,
 			};
+			return res;
 		}
 	};
 }
@@ -153,4 +166,17 @@ test "finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
+}
+
+test "abi" {
+	var b = try Builder(?[]const i8).init(std.testing.allocator);
+	try b.append(null);
+	try b.append(&[_]i8{1,2,3});
+
+	const a = try b.finish();
+
+	var c = try a.toOwnedAbi();
+	defer c.release.?(&c);
+	var s = try a.ownedSchema();
+	defer s.release.?(&s);
 }

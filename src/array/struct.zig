@@ -103,14 +103,17 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !array.Array {
+		pub fn finish(self: *Self) !*array.Array {
 			const fields = @typeInfo(ChildrenBuilders).Struct.fields;
-			const children = try self.allocator.alloc(array.Array, fields.len);
+			const children = try self.allocator.alloc(*array.Array, fields.len);
 			inline for (fields, 0..) |f, i| {
 				children[i] = try @field(self.children, f.name).finish();
+				children[i].name = f.name;
 			}
-			return .{
+			var res = try array.Array.init(self.allocator);
+			res.* = .{
 				.tag = tags.Tag{ .struct_ = opts },
+				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = children[0].length,
 				.null_count = if (NullCount != void) self.null_count else 0,
@@ -120,6 +123,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 				.values = &[_]u8{},
 				.children = children,
 			};
+			return res;
 		}
 	};
 }
@@ -217,4 +221,25 @@ test "finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(array.MaskInt, 0b110), a.validity[0]);
+}
+
+test "c abi" {
+	const T = struct {
+		val: ?i32,
+	};
+	var b = try Builder(?T).init(std.testing.allocator);
+
+	try b.append(null);
+	try b.append(.{ .val = 1 });
+	try b.append(T{ .val = 2 });
+
+	var a = try b.finish();
+	var c = try a.toOwnedAbi();
+	defer c.release.?(&c);
+
+	var cname = "table 1";
+	a.name = cname;
+	var s = try a.ownedSchema();
+	defer s.release.?(&s);
+	try std.testing.expectEqualStrings(cname, s.name.?[0..cname.len]);
 }

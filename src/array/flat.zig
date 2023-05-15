@@ -95,18 +95,22 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !array.Array {
-			return .{
+		pub fn finish(self: *Self) !*array.Array {
+			const allocator = self.values.allocator;
+			var res = try array.Array.init(allocator);
+			res.* = .{
 				.tag = tag,
-				.allocator = self.values.allocator,
+				.name = @typeName(T) ++ " builder",
+				.allocator = allocator,
 				.length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len,
 				.null_count = if (NullCount != void) self.null_count else 0,
 				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
 				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &.{},
 				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
-				.children = &[_]array.Array{}
+				.children = &.{}
 			};
+			return res;
 		}
 	};
 }
@@ -142,7 +146,7 @@ test "primitive finish" {
 	try b.append(2);
 	try b.append(4);
 
-	const a = try b.finish();
+	var a = try b.finish();
 	defer a.deinit();
 
 	const masks = a.validity;
@@ -179,7 +183,7 @@ test "varbinary finish" {
 	try b.append(null);
 	try b.append("hello");
 
-	const a = try b.finish();
+	var a = try b.finish();
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
@@ -209,8 +213,9 @@ test "c abi" {
 	const values = @ptrCast([*]u8, buf2);
 	try std.testing.expectEqualStrings("hello", values[0..5]);
 
-	var cname: [2]u8 = "c1".*;
-	var s = try a.ownedSchemaCopyName(&cname);
+	var cname = "c1";
+	a.name = cname;
+	var s = try a.ownedSchema();
 	defer s.release.?(@constCast(&s));
-	try std.testing.expectEqualStrings(&cname, s.name.?[0..cname.len]);
+	try std.testing.expectEqualStrings(cname, s.name.?[0..cname.len]);
 }

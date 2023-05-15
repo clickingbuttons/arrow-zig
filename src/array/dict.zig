@@ -29,14 +29,16 @@ pub fn BuilderAdvanced(
 		hashmap: HashMap,
 		child: ChildBuilder,
 
+		pub fn Type() type {
+			return AppendType;
+		}
+
 		pub fn init(allocator: std.mem.Allocator) !Self {
-			var res = Self {
+			return .{
 				.indices = IndexList.init(allocator),
 				.hashmap = HashMap.init(allocator),
 				.child = try ChildBuilder.init(allocator),
 			};
-
-			return res;
 		}
 
 		pub fn deinit(self: *Self) void {
@@ -56,22 +58,25 @@ pub fn BuilderAdvanced(
 			try self.indices.append(index);
 		}
 
-		pub fn finish(self: *Self) !array.Array {
+		pub fn finish(self: *Self) !*array.Array {
 			const allocator = self.hashmap.allocator;
-			const children = try allocator.alloc(array.Array, 1);
+			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
 			self.hashmap.deinit();
-			return .{
+			var res = try array.Array.init(allocator);
+			res.* = .{
 				.tag = tags.Tag{ .dictionary = opts },
+				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
 				.length = self.indices.items.len,
 				.null_count = 0,
 				.validity = &.{},
-				// TODO: implement @ptrCast between slices changing the length
 				.offsets = &.{},
+				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
 				.children = children,
 			};
+			return res;
 		}
 	};
 }
