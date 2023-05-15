@@ -1,11 +1,19 @@
 #!/bin/env python
 # Requires pyarrow.
 # `zig build` -> python integration_test.py
-import os
+from os import path
 from ctypes import *
 import pyarrow
+from sys import platform
 
-libname = os.path.abspath(os.path.join(os.path.dirname(__file__), "zig-out", "lib", "libarrow-zig.so"))
+def soExt():
+	if platform == "win32":
+		return "dll"
+	if platform == "darwin":
+		return "dylib"
+	return "so"
+
+libname = path.abspath(path.join(path.dirname(__file__), "zig-out", "lib", "libarrow-zig." + soExt()))
 lib = CDLL(libname)
 
 class ArrowArray(Structure):
@@ -36,16 +44,6 @@ ArrowSchema._fields_ = [
 	('release', CFUNCTYPE(None, POINTER(ArrowSchema))),
 	('private_data', c_void_p),
 ]
-
-class QueryOptions(Structure):
-	_fields_ = [
-		('host', POINTER(c_char)),
-		('port', c_uint32),
-		('default_database', POINTER(c_char)),
-		('user', POINTER(c_char)),
-		('password', POINTER(c_char)),
-		('compression', c_int),
-	]
 
 arr = ArrowArray()
 schema = ArrowSchema()

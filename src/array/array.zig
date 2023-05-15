@@ -2,6 +2,10 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 const abi = @import("../abi.zig");
 
+const RecordBatchError = error {
+	NotStruct,
+};
+
 pub const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
 // This exists to be able to nest arrays at runtime.
 pub const Array = struct {
@@ -42,6 +46,14 @@ pub const Array = struct {
 		return try allocator.create(Self);
 	}
 
+	fn deinitValidity(self: *Self) void {
+		// See bit_set.zig#deinit
+		if (self.validity.len > 0) {
+			const old_allocation = (self.validity.ptr - 1)[0..(self.validity.ptr - 1)[0]];
+			self.allocator.free(old_allocation);
+		}
+	}
+
 	fn deinit2(self: *Self, comptime free_children: bool) void {
 		if (free_children) {
 			for (self.children) |c| {
@@ -49,11 +61,7 @@ pub const Array = struct {
 			}
 		}
 
-		// See bit_set.zig#deinit
-		if (self.validity.len > 0) {
-			const old_allocation = (self.validity.ptr - 1)[0..(self.validity.ptr - 1)[0]];
-			self.allocator.free(old_allocation);
-		}
+		self.deinitValidity();
 
 		if (self.offsets.len > 0) {
 			self.allocator.free(self.offsets);
@@ -221,6 +229,19 @@ pub const Array = struct {
 			.release = schemaRelease,
 			.private_data = @ptrCast(?*anyopaque, self),
 		};
+	}
+
+	pub fn toRecordBatch(self: *Self, name: []const u8) RecordBatchError!void {
+		if (self.tag != .struct_) {
+			return RecordBatchError.NotStruct;
+		}
+		// Record batches don't support nulls. It's ok to erase this because our struct impl saves null
+		// info in the children arrays.
+		// https://docs.rs/arrow-array/latest/arrow_array/array/struct.StructArray.html#comparison-with-recordbatch
+		self.name = name;
+		self.null_count = 0;
+		self.deinitValidity();
+		self.validity = &.{};
 	}
 };
 

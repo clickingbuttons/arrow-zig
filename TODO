@@ -21,6 +21,8 @@
 
 ## impl
 - [x] c
-	- [ ] align in abi
+	- [x] integration test
+	- [ ] validity bitmask align(64)
+	- [ ] good abi
 - [ ] flatbuffers
 

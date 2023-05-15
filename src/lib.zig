@@ -38,6 +38,7 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 	{
 		errdefer b.deinit();
 
+		// Keep synched with integration_test.py
 		try b.append(null);
 		try b.append(.{
 			.a = "hello",
@@ -62,12 +63,11 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 	}
 
 	var a = try b.finish();
-	a.name = "table 1";
 	{
 		errdefer a.deinit();
 
+		try a.toRecordBatch("table 1");
 		out_array.* = try a.toOwnedAbi();
-		out_array.*.null_count = 0;
 		out_schema.* = try a.ownedSchema();
 	}
 }
