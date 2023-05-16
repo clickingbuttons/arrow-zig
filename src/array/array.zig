@@ -15,7 +15,7 @@ pub const Array = struct {
 	length: usize,
 	null_count: usize,
 	// TODO: align(64)
-	validity: []MaskInt,
+	validity: []align(64) MaskInt,
 	offsets: []align(64) u8,
 	values: []align(64) u8,
 	children: []*Array,
@@ -47,10 +47,8 @@ pub const Array = struct {
 	}
 
 	fn deinitValidity(self: *Self) void {
-		// See bit_set.zig#deinit
 		if (self.validity.len > 0) {
-			const old_allocation = (self.validity.ptr - 1)[0..(self.validity.ptr - 1)[0]];
-			self.allocator.free(old_allocation);
+			self.allocator.free(self.validity);
 		}
 	}
 
@@ -62,7 +60,6 @@ pub const Array = struct {
 		}
 
 		self.deinitValidity();
-
 		if (self.offsets.len > 0) {
 			self.allocator.free(self.offsets);
 		}
@@ -83,40 +80,43 @@ pub const Array = struct {
 		return std.mem.bytesAsSlice(T, self.values);
 	}
 
-	fn abiBuffers(self: Self, layout: abi.Array.Layout, n_buffers: usize) std.mem.Allocator.Error!?[*]?*const anyopaque {
+	const BufferPtrs = std.meta.fieldInfo(abi.Array, .buffers).type;
+	const BufferPtr = ?*align(64) const anyopaque;
+
+	fn abiBuffers(self: Self, layout: abi.Array.Layout, n_buffers: usize) std.mem.Allocator.Error!BufferPtrs {
 		if (n_buffers == 0) {
 			return null;
 		}
 
-		const buffers = try self.allocator.alloc(?*const anyopaque, n_buffers);
+		const buffers = try self.allocator.alloc(BufferPtr, n_buffers);
 		@memset(buffers, null);
 		var i: usize = 0;
 		if (layout.hasTypeIds()) {
 			if (self.values.len > 0) {
-				buffers[i] = @ptrCast(?*const anyopaque, self.values.ptr);
+				buffers[i] = @ptrCast(BufferPtr, self.values.ptr);
 			}
 			i += 1;
 		}
 		if (layout.hasValidity()) {
 			if (self.null_count > 0) {
-				buffers[i] = @ptrCast(?*const anyopaque, self.validity.ptr);
+				buffers[i] = @ptrCast(BufferPtr, self.validity.ptr);
 			}
 			i += 1;
 		}
 		if (layout.hasOffsets()) {
 			if (self.offsets.len > 0) {
-				buffers[i] = @ptrCast(?*const anyopaque, self.offsets.ptr);
+				buffers[i] = @ptrCast(BufferPtr, self.offsets.ptr);
 			}
 			i += 1;
 		}
 		if (layout.hasData()) {
 			if (self.values.len > 0) {
-				buffers[i] = @ptrCast(?*const anyopaque, self.values.ptr);
+				buffers[i] = @ptrCast(BufferPtr, self.values.ptr);
 			}
 			i += 1;
 		}
 
-		return @ptrCast(?[*]?*const anyopaque, buffers);
+		return @ptrCast(BufferPtrs, buffers);
 	}
 
 	fn abiChildren(self: Self, n_children: usize) std.mem.Allocator.Error!?[*]*abi.Array {
@@ -249,12 +249,19 @@ fn numMasks(bit_length: usize) usize {
 	return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
 }
 
-pub fn validity(bit_set: *std.bit_set.DynamicBitSet, null_count: usize) []MaskInt {
+pub fn validity(allocator: std.mem.Allocator, bit_set: *std.bit_set.DynamicBitSet, null_count: usize) ![]align(64) MaskInt {
+	// Have to copy out for alignment until aligned bit masks land in std :(
+	// https://github.com/ziglang/zig/issues/15600
 	if (null_count == 0) {
 		bit_set.deinit();
 		return &.{};
 	}
-	return bit_set.unmanaged.masks[0..numMasks(bit_set.unmanaged.bit_length)];
+	const n_masks = numMasks(bit_set.unmanaged.bit_length);
+	const copy = try allocator.alignedAlloc(MaskInt, 64, n_masks);
+	@memcpy(copy, bit_set.unmanaged.masks[0..n_masks]);
+	bit_set.deinit();
+
+	return copy;
 }
 
 // Dummy allocator

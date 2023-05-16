@@ -106,23 +106,29 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
 			const tag = if (fixed_len == 0)
-				tags.Tag{ .list = opts }
-			else tags.Tag { .list_fixed = .{
-				.is_nullable = opts.is_nullable,
-				.fixed_len = @intCast(i16, fixed_len),
-				.is_large = opts.is_large
-			} };
+					tags.Tag{ .list = opts }
+				else tags.Tag { .list_fixed = .{
+					.is_nullable = opts.is_nullable,
+					.fixed_len = @intCast(i16, fixed_len),
+					.is_large = opts.is_large
+				} };
+			const validity = if (ValidityList != void)
+					try array.validity(allocator, &self.validity, self.null_count)
+				else &[_]tags.MaskInt{};
+			const offsets = if (OffsetList != void)
+					std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
+				else &[_]u8{};
 
 			var res = try array.Array.init(allocator);
 			res.* = .{
 				.tag = tag,
 				.name = @typeName(AppendType) ++ " builder",
-				.allocator = self.child.values.allocator,
+				.allocator = allocator,
 				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &[_]tags.MaskInt{},
+				.validity = validity,
 				// TODO: implement @ptrCast between slices changing the length
-				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &[_]u8{},
+				.offsets = offsets,
 				.values = &.{},
 				.children = children,
 			};

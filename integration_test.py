@@ -2,6 +2,7 @@
 # Requires pyarrow.
 # `zig build` -> python integration_test.py
 from os import path
+import sys
 from ctypes import *
 import pyarrow
 from sys import platform
@@ -13,7 +14,7 @@ def soExt():
 		return "dylib"
 	return "so"
 
-libname = path.abspath(path.join(path.dirname(__file__), "zig-out", "lib", "libarrow-zig." + soExt()))
+libname = path.abspath(path.join("zig-out", "lib", "libarrow-zig." + soExt()))
 lib = CDLL(libname)
 
 class ArrowArray(Structure):
@@ -47,13 +48,30 @@ ArrowSchema._fields_ = [
 
 arr = ArrowArray()
 schema = ArrowSchema()
-res = lib.testArray(byref(arr), byref(schema))
+res = lib.sampleRecordBatch(byref(arr), byref(schema))
 if res != 0:
 		raise Exception(res)
 
-# print(schema.children[0].contents.name[:2])
-
 rb = pyarrow.RecordBatch._import_from_c(addressof(arr), addressof(schema))
 tb = pyarrow.Table.from_batches([rb])
-print(tb)
+tb.validate(full=True)
 
+expected = {
+	"a": [None, "hello", "goodbye"],
+	"b": [None, 1, 2],
+	"c": [None, [3,4], [5,6]],
+	"d": [None, [3,4], [5,6]],
+	"e": [None, { "a": 3, "b": 6}, { "a": 4, "b": 7 }],
+	"f": [None, 3, 4],
+	"g": [None, 3, 1],
+	"h": [None, 3, 4],
+}
+
+code = 0
+for k in expected.keys():
+	actual = [v.as_py() for v in tb.column(k)]
+	if expected[k] != actual:
+		code = 1
+		print("column", k, "expected", expected[k], "got", actual)
+
+sys.exit(code)

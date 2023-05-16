@@ -28,8 +28,7 @@ pub const Array = extern struct {
 	offset: i64 = 0,
 	n_buffers: i64,
 	n_children: i64 = 0,
-	// TODO: alignment?
-	buffers: ?[*]?*const anyopaque = null, // Managed
+	buffers: ?[*]?*align(64) const anyopaque = null, // Managed
 	children: ?[*]*Array = null, // Managed
 	dictionary: ?*Array = null, // Managed
 	release: ?*const fn (*Array) callconv(.C) void = null,

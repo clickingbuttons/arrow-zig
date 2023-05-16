@@ -111,13 +111,16 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 				children[i].name = f.name;
 			}
 			var res = try array.Array.init(self.allocator);
+			const validity = if (ValidityList != void)
+					try array.validity(self.allocator, &self.validity, self.null_count)
+				else &.{};
 			res.* = .{
 				.tag = tags.Tag{ .struct_ = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = children[0].length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
+				.validity = validity,
 				// TODO: implement @ptrCast between slices changing the length
 				.offsets = &[_]u8{},
 				.values = &[_]u8{},

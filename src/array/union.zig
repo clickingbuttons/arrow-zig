@@ -200,6 +200,7 @@ test "nullable union advanced with finish" {
 	try std.testing.expectEqual(@as(u8, 0), a.values[2]);
 	try std.testing.expectEqual(@as(u8, 1), a.values[3]);
 	try std.testing.expectEqual(@as(array.MaskInt, 0b0101), a.children[0].validity[0]);
+	try std.testing.expectEqual(@as(usize, 0), a.children[1].null_count);
 	try std.testing.expectEqual(@as(usize, 0), a.children[1].validity.len);
 }
 

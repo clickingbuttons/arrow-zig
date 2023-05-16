@@ -98,14 +98,22 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 		pub fn finish(self: *Self) !*array.Array {
 			const allocator = self.values.allocator;
 			var res = try array.Array.init(allocator);
+			const validity = if (ValidityList != void)
+					try array.validity(allocator, &self.validity, self.null_count)
+				else &.{};
+			const length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len;
+			const offsets = if (OffsetList != void)
+					std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
+				else &.{};
+
 			res.* = .{
 				.tag = tag,
 				.name = @typeName(T) ++ " builder",
 				.allocator = allocator,
-				.length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len,
+				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = if (ValidityList != void) array.validity(&self.validity, self.null_count) else &.{},
-				.offsets = if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &.{},
+				.validity = validity,
+				.offsets = offsets,
 				// TODO: implement @ptrCast between slices changing the length
 				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
 				.children = &.{}

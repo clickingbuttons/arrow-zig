@@ -11,7 +11,7 @@ pub const Array = array.Array;
 pub const Builder = builder.Builder;
 pub const null_array = array.null_array;
 
-fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *abi.Schema) !void {
+fn sampleRecordBatch2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *abi.Schema) !void {
 	const StructT = struct {
 		a: ?i32,
 		b: ?i8,
@@ -57,7 +57,7 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 			.d = [_]i32{5,6},
 			.e = .{ .a = 4, .b = 7 },
 			.f = .{ .b = 4 },
-			.g = .{ .f = 1.2 },
+			.g = .{ .f = 1 },
 			.h = 4,
 		});
 	}
@@ -72,8 +72,8 @@ fn testArray2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *
 	}
 }
 
-export fn testArray(out_array: *abi.Array, out_schema: *abi.Schema) callconv(.C) i64 {
-	testArray2(std.heap.page_allocator, out_array, out_schema) catch return 1;
+export fn sampleRecordBatch(out_array: *abi.Array, out_schema: *abi.Schema) callconv(.C) i64 {
+	sampleRecordBatch2(std.heap.page_allocator, out_array, out_schema) catch return 1;
 	return 0;
 }
 
@@ -92,7 +92,7 @@ test {
 test "abi" {
 	var arr: abi.Array = undefined;
 	var schema: abi.Schema = undefined;
-	try testArray2(std.testing.allocator, &arr, &schema);
+	try sampleRecordBatch2(std.testing.allocator, &arr, &schema);
 	defer arr.release.?(&arr);
 	defer schema.release.?(&schema);
 	
