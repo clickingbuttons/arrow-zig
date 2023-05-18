@@ -1,5 +1,8 @@
 const std = @import("std");
 
+// TODO: make IPC impl read each buffer into 64-byte aligned arraylist
+pub const BufferAlignment = 8;
+
 // https://arrow.apache.org/docs/format/CDataInterface.html#structure-definitions
 pub const Schema = extern struct {
 	format: [*:0]const u8, // Managed
@@ -28,7 +31,7 @@ pub const Array = extern struct {
 	offset: i64 = 0,
 	n_buffers: i64,
 	n_children: i64 = 0,
-	buffers: ?[*]?*align(64) const anyopaque = null, // Managed
+	buffers: ?[*]?*align(BufferAlignment) const anyopaque = null, // Managed
 	children: ?[*]*Array = null, // Managed
 	dictionary: ?*Array = null, // Managed
 	release: ?*const fn (*Array) callconv(.C) void = null,
@@ -72,7 +75,7 @@ pub const Array = extern struct {
 			};
 		}
 
-		pub fn hasData(self: Self) bool {
+		pub fn hasValues(self: Self) bool {
 			return switch (self) {
 				.Primitive, .VariableBinary, .Dictionary => true,
 				else => false
@@ -84,12 +87,35 @@ pub const Array = extern struct {
 				@intCast(usize, @boolToInt(self.hasTypeIds())) +
 				@intCast(usize, @boolToInt(self.hasValidity())) +
 				@intCast(usize, @boolToInt(self.hasOffsets())) +
-				@intCast(usize, @boolToInt(self.hasData()));
+				@intCast(usize, @boolToInt(self.hasValues()));
 			std.debug.assert(res <= 3);
 			return res;
 		}
+
+		pub fn hasChildren(self: Self) bool {
+			return switch (self) {
+				.List, .FixedList, .Struct, .SparseUnion, .DenseUnion, .Dictionary => true,
+				else => false,
+			};
+		}
 	};
 };
+
+fn testLayout(layout: Array.Layout, n_buffers: usize) !void {
+	try std.testing.expectEqual(n_buffers, layout.nBuffers());
+}
+test "nbuffers" {
+	// https://arrow.apache.org/docs/format/Columnar.html#buffer-listing-for-each-layout
+	try testLayout(Array.Layout.Primitive, 2);
+	try testLayout(Array.Layout.VariableBinary, 3);
+	try testLayout(Array.Layout.List, 2);
+	try testLayout(Array.Layout.FixedList, 1);
+	try testLayout(Array.Layout.Struct, 1);
+	try testLayout(Array.Layout.SparseUnion, 1);
+	try testLayout(Array.Layout.DenseUnion, 2);
+	try testLayout(Array.Layout.Null, 0);
+	try testLayout(Array.Layout.Dictionary, 2);
+}
 
 pub const ArrayStream = extern struct {
 	get_schema: *const fn (*ArrayStream, *Schema) callconv(.C) c_int,

@@ -9,7 +9,7 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
 
 	const OffsetType = if (opts.is_large) i64 else i32;
-	const OffsetList = if (fixed_len == 0) std.ArrayListAligned(OffsetType, 64) else void;
+	const OffsetList = if (fixed_len == 0) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
 
 	const ChildAppendType = ChildBuilder.Type();
 	const AppendType = switch (opts.is_nullable) {
@@ -112,12 +112,6 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 					.fixed_len = @intCast(i16, fixed_len),
 					.is_large = opts.is_large
 				} };
-			const validity = if (ValidityList != void)
-					try array.validity(allocator, &self.validity, self.null_count)
-				else &[_]tags.MaskInt{};
-			const offsets = if (OffsetList != void)
-					std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
-				else &[_]u8{};
 
 			var res = try array.Array.init(allocator);
 			res.* = .{
@@ -126,10 +120,15 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 				.allocator = allocator,
 				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = validity,
-				// TODO: implement @ptrCast between slices changing the length
-				.offsets = offsets,
-				.values = &.{},
+				.bufs = .{ 
+					if (ValidityList != void)
+						try array.validity(allocator, &self.validity, self.null_count)
+					else &.{},
+					if (OffsetList != void)
+						std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
+					else &.{},
+					&.{},
+				},
 				.children = children,
 			};
 			return res;
@@ -171,7 +170,7 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
+	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
 }
 
 test "abi" {

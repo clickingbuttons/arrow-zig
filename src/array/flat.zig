@@ -16,8 +16,8 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 	const ValueType = tag.Primitive();
 
 	const OffsetType = if (opts.is_large) i64 else i32;
-	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, 64) else void;
-	const ValueList = std.ArrayListAligned(ValueType, 64);
+	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
+	const ValueList = std.ArrayListAligned(ValueType, array.BufferAlignment);
 
 	return struct {
 		const Self = @This();
@@ -98,13 +98,23 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 		pub fn finish(self: *Self) !*array.Array {
 			const allocator = self.values.allocator;
 			var res = try array.Array.init(allocator);
-			const validity = if (ValidityList != void)
-					try array.validity(allocator, &self.validity, self.null_count)
-				else &.{};
+
 			const length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len;
-			const offsets = if (OffsetList != void)
+			var bufs: [3][]align(array.BufferAlignment) u8 = .{
+				if (ValidityList != void)
+					try array.validity(allocator, &self.validity, self.null_count)
+				else &.{},
+				&.{},
+				&.{},
+			};
+			if (tag.abiLayout() == .Primitive) {
+				bufs[1] = std.mem.sliceAsBytes(try self.values.toOwnedSlice());
+			} else {
+				bufs[1] = if (OffsetList != void)
 					std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
 				else &.{};
+				bufs[2] = std.mem.sliceAsBytes(try self.values.toOwnedSlice());
+			}
 
 			res.* = .{
 				.tag = tag,
@@ -112,10 +122,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 				.allocator = allocator,
 				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = validity,
-				.offsets = offsets,
-				// TODO: implement @ptrCast between slices changing the length
-				.values = std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
+				.bufs = bufs,
 				.children = &.{}
 			};
 			return res;
@@ -134,6 +141,7 @@ test "primitive init + deinit" {
 	try b.append(32);
 }
 
+const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
 test "primitive optional" {
 	var b = try Builder(?i32).init(std.testing.allocator);
 	defer b.deinit();
@@ -143,7 +151,7 @@ test "primitive optional" {
 	try b.append(4);
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(array.MaskInt, 0b1101), masks[0]);
+	try std.testing.expectEqual(@as(MaskInt, 0b1101), masks[0]);
 }
 
 test "primitive finish" {
@@ -157,9 +165,8 @@ test "primitive finish" {
 	var a = try b.finish();
 	defer a.deinit();
 
-	const masks = a.validity;
-	try std.testing.expectEqual(@as(array.MaskInt, 0b1101), masks[0]);
-	try std.testing.expectEqual(@as(T, 4), a.values_as(T)[3]);
+	const masks = a.bufs[0];
+	try std.testing.expectEqual(@as(u8, 0b1101), masks[0]);
 }
 
 test "varbinary init + deinit" {
@@ -183,19 +190,20 @@ test "varbinary optional" {
 	try b.append(&[_]u8{1,2,3});
 
 	const masks = b.validity.unmanaged.masks;
-	try std.testing.expectEqual(@as(array.MaskInt, 0b10), masks[0]);
+	try std.testing.expectEqual(@as(MaskInt, 0b10), masks[0]);
 }
 
 test "varbinary finish" {
 	var b = try Builder(?[]const u8).init(std.testing.allocator);
+	const s = "hello";
 	try b.append(null);
-	try b.append("hello");
+	try b.append(s);
 
 	var a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
-	try std.testing.expectEqualStrings("hello", a.values[0..5]);
+	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
+	try std.testing.expectEqualStrings(s, a.bufs[2][0..s.len]);
 }
 
 test "c abi" {
@@ -208,7 +216,7 @@ test "c abi" {
 	defer c.release.?(@constCast(&c));
 
 	const buf0 = @constCast(c.buffers.?[0].?);
-	try std.testing.expectEqual(@as(array.MaskInt, 0b10), @ptrCast([*]u8, buf0)[0]);
+	try std.testing.expectEqual(@as(u8, 0b10), @ptrCast([*]u8, buf0)[0]);
 	try std.testing.expectEqual(@as(i64, 1), c.null_count);
 
 	const buf1 = @constCast(c.buffers.?[1].?);

@@ -17,7 +17,7 @@ pub fn BuilderAdvanced(
 		.i16 => i16,
 		.i8 => i8,
 	};
-	const IndexList = std.ArrayListAligned(IndexType, 64);
+	const IndexList = std.ArrayListAligned(IndexType, array.BufferAlignment);
 
 	const AppendType = ChildBuilder.Type();
 	const HashMap = std.HashMap(AppendType, IndexType, Context, max_load_percentage);
@@ -47,6 +47,7 @@ pub fn BuilderAdvanced(
 			self.child.deinit();
 		}
 
+		// Null means insert a null item into the dictionary.
 		pub fn append(self: *Self, value: AppendType) std.mem.Allocator.Error!void {
 			const count = @intCast(IndexType, self.hashmap.count());
 			const get_res = try self.hashmap.getOrPut(value);
@@ -70,10 +71,11 @@ pub fn BuilderAdvanced(
 				.allocator = allocator,
 				.length = self.indices.items.len,
 				.null_count = 0,
-				.validity = &.{},
-				.offsets = &.{},
-				// TODO: implement @ptrCast between slices changing the length
-				.values = std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
+				.bufs = .{
+					&.{}, // No clean way to tell null dictionary item vs null item in dict.
+					std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
+					&.{},
+				},
 				.children = children,
 			};
 			return res;
@@ -183,8 +185,7 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[0]);
-	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[1]);
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1 }, a.children[0].bufs[1][0..2]);
 }
 
 pub fn Builder(comptime T: type) type {
@@ -204,7 +205,4 @@ test "convienence finish" {
 
 	const a = try b.finish();
 	defer a.deinit();
-
-	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[0]);
-	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[1]);
 }

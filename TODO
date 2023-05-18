@@ -26,5 +26,12 @@
 	- [x] good abi
 - [x] flatbuffers
 - [ ] ipc
+
+## correctness
+- [ ] read all buffers for all tests
+- [ ] 64 bytes align
+
+## impl
+- [ ] more dict types
 - [ ] datetime types
 - [ ] decimal types

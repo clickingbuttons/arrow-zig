@@ -31,8 +31,6 @@ test "finish" {
 
 	try std.testing.expectEqual(@as(usize, 2), a.length);
 	try std.testing.expectEqual(@as(usize, 1), a.null_count);
-	try std.testing.expectEqual(@as(u8, 1), a.children[0].values[0]);
-	try std.testing.expectEqual(@as(u8, 0), a.children[0].values[3]);
-
-	try std.testing.expectEqual(@as(array.MaskInt, 0b01), a.validity[0]);
+	try std.testing.expectEqual(@as(u8, 0b01), a.bufs[0][0]);
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 0, 0, 0 }, a.children[0].bufs[1][0..6]);
 }

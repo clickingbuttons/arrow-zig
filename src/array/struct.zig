@@ -111,19 +111,19 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 				children[i].name = f.name;
 			}
 			var res = try array.Array.init(self.allocator);
-			const validity = if (ValidityList != void)
-					try array.validity(self.allocator, &self.validity, self.null_count)
-				else &.{};
 			res.* = .{
 				.tag = tags.Tag{ .struct_ = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = children[0].length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.validity = validity,
-				// TODO: implement @ptrCast between slices changing the length
-				.offsets = &[_]u8{},
-				.values = &[_]u8{},
+				.bufs = .{
+					if (ValidityList != void)
+						try array.validity(self.allocator, &self.validity, self.null_count)
+					else &.{},
+					&.{},
+					&.{},
+				},
 				.children = children,
 			};
 			return res;
@@ -156,7 +156,7 @@ test "nullable struct advanced with finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(array.MaskInt, 0b10), a.validity[0]);
+	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
 }
 
 fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type {
@@ -223,7 +223,7 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(array.MaskInt, 0b110), a.validity[0]);
+	try std.testing.expectEqual(@as(u8, 0b110), a.bufs[0][0]);
 }
 
 test "c abi" {
