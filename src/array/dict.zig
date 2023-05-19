@@ -47,8 +47,10 @@ pub fn BuilderAdvanced(
 			self.child.deinit();
 		}
 
-		// Null means insert a null item into the dictionary.
+		// Null means insert a null item into the dictionary. This array has no validity.
 		pub fn append(self: *Self, value: AppendType) std.mem.Allocator.Error!void {
+			// > The null count of such arrays is dictated only by the validity bitmap of its indices,
+			// > irrespective of any null values in the dictionary.
 			const count = @intCast(IndexType, self.hashmap.count());
 			const get_res = try self.hashmap.getOrPut(value);
 			const index = if (get_res.found_existing) get_res.value_ptr.* else count;
@@ -63,6 +65,7 @@ pub fn BuilderAdvanced(
 			const allocator = self.hashmap.allocator;
 			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
+			children[0].name = "dict values";
 			self.hashmap.deinit();
 			var res = try array.Array.init(allocator);
 			res.* = .{
@@ -72,12 +75,19 @@ pub fn BuilderAdvanced(
 				.length = self.indices.items.len,
 				.null_count = 0,
 				.bufs = .{
-					&.{}, // No clean way to tell null dictionary item vs null item in dict.
+					&.{},
 					std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
 					&.{},
 				},
 				.children = children,
 			};
+			if (children[0].tag.abiLayout().hasValidity()) {
+				res.*.null_count = children[0].null_count;
+				res.*.bufs[0] = children[0].bufs[0];
+				children[0].tag.setNullable(false);
+				children[0].null_count = 0;
+				children[0].bufs[0] = &.{};
+			}
 			return res;
 		}
 	};
@@ -103,7 +113,6 @@ pub fn getAutoEqlFn(comptime K: type, comptime Context: type) (fn (Context, K, K
 		}
 	}.eql;
 }
-
 
 pub fn AutoContext(comptime K: type) type {
 	return struct {

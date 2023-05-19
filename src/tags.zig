@@ -216,5 +216,15 @@ pub const Tag = union(enum) {
 			else => false
 		};
 	}
+
+	pub fn setNullable(self: *Self, is_nullable: bool) void {
+		switch (self.*) {
+			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, .struct_ => |*opts| opts.is_nullable = is_nullable,
+			.list_fixed => |*opts| opts.is_nullable = is_nullable,
+			.list => |*opts| opts.is_nullable = is_nullable,
+			.union_ => |*opts| opts.is_nullable = is_nullable,
+			else => std.debug.print("tried to set nullable on {any}\n", .{ self }),
+		}
+	}
 };
 

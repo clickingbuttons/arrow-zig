@@ -3,6 +3,8 @@ const Footer = @import("./gen/Footer.fb.zig").Footer;
 const Message = @import("./gen/Message.fb.zig").Message;
 const Schema = @import("./gen/Schema.fb.zig").Schema;
 const RecordBatch = @import("./gen/RecordBatch.fb.zig").RecordBatch;
+const DictionaryBatch = @import("./gen/DictionaryBatch.fb.zig").DictionaryBatch;
+const DictionaryEncoding = @import("./gen/DictionaryEncoding.fb.zig").DictionaryEncoding;
 const Array = @import("../array/array.zig").Array;
 const FieldType = @import("./gen/Type.fb.zig").TypeT;
 const Field = @import("./gen/Field.fb.zig").Field;
@@ -23,6 +25,9 @@ const IpcError = error {
 	InvalidRecordBatch,
 	InvalidRecordBatchHeader,
 	InvalidBitWidth,
+	InvalidDictionaryBatchHeader,
+	InvalidDictionaryIndexType,
+	DictNotFound,
 };
 
 fn toTag(tag: FieldType, is_nullable: bool) !tags.Tag {
@@ -87,7 +92,22 @@ fn toTag(tag: FieldType, is_nullable: bool) !tags.Tag {
 	};
 }
 
+fn toDictTag(dict: DictionaryEncoding) !tags.Tag {
+	return .{
+		.dictionary = .{
+			.index = switch (dict.IndexType().?.BitWidth()) {
+				8 => .i8,
+				16 => .i16,
+				32 => .i32,
+				else => return IpcError.InvalidDictionaryIndexType,
+			}
+		}
+	};
+}
+
 const RecordBatchReader = struct {
+	const Dictionaries = std.AutoHashMap(i64, *Array);
+
 	allocator: std.mem.Allocator,
 	arena: std.heap.ArenaAllocator,
 	source: std.io.StreamSource,
@@ -96,6 +116,7 @@ const RecordBatchReader = struct {
 
 	node_index: usize = 0,
 	buffer_index: usize = 0,
+	dictionaries: Dictionaries,
 
 	const Self = @This();
 
@@ -104,7 +125,8 @@ const RecordBatchReader = struct {
 			.allocator = allocator,
 			.arena = std.heap.ArenaAllocator.init(allocator),
 			.source = source,
-			.schema = undefined
+			.schema = undefined,
+			.dictionaries = Dictionaries.init(allocator),
 		};
 		res.schema = try res.readSchema();
 		return res;
@@ -125,6 +147,7 @@ const RecordBatchReader = struct {
 
 	pub fn deinit(self: *Self) void {
 		if (self.owns_file) self.source.file.close();
+		self.dictionaries.deinit();
 		self.arena.deinit();
 	}
 
@@ -141,11 +164,8 @@ const RecordBatchReader = struct {
 	}
 
 	fn readMessageLen(self: *Self) !usize {
-		// <continuation: 0xFFFFFFFF> THIS IS A LIE.
 		// > This component was introduced in version 0.15.0 in part to address the 8-byte alignment
-		// requirement of Flatbuffers.
-		// Older versions just skip it! :)
-		// <metadata_size: int32> (size of metadata_flatbuffer plus padding)
+		// > requirement of Flatbuffers.
 		var res = try self.source.reader().readIntLittle(MessageLen);
 		if (res == continuation) {
 			return self.readMessageLen();
@@ -155,7 +175,7 @@ const RecordBatchReader = struct {
 	}
 
 	fn readMessage(self: *Self) !?Message {
-		// <continuation: 0xFFFFFFFF>
+		// <continuation: 0xFFFFFFFF> (optional)
 		// <metadata_size: int32>
 		// <metadata_flatbuffer: bytes>
 		// <padding to 8 byte boundary>
@@ -168,8 +188,8 @@ const RecordBatchReader = struct {
 		if (n_read != message_buf.len) {
 			return IpcError.InvalidLen;
 		}
-		// Seek to end of 8 byte boundary
-		try self.source.reader().skipBytes(n_read % 8, .{});
+		// Seek to end of 8 byte boundary?
+		// try self.source.reader().skipBytes(n_read % 8, .{});
 		// std.debug.print("padding {d}\n", .{ n_read % 8 });
 		return Message.GetRootAs(message_buf, 0);
 	}
@@ -220,11 +240,11 @@ const RecordBatchReader = struct {
 		// > record batch. 
 		const allocator = self.arena.allocator();
 		const field_type = try FieldType.Unpack(field.TypeType(), field.Type_().?, .{ .allocator = allocator });
-		const tag = try toTag(field_type, field.Nullable());
+		const tag = if (field.Dictionary()) |d| try toDictTag(d) else try toTag(field_type, field.Nullable());
 
 		const layout = tag.abiLayout();
-		std.debug.assert(self.node_index < @intCast(usize, header.NodesLen()));
 		// std.debug.print("node {d} / {d}\n", .{ self.node_index, header.NodesLen() });
+		std.debug.assert(self.node_index < @intCast(usize, header.NodesLen()));
 		const node = header.Nodes(self.node_index).?;
 		self.node_index += 1;
 
@@ -252,21 +272,25 @@ const RecordBatchReader = struct {
 				res.children[i] = try self.readField(header, buf, field.Children(i).?);
 			}
 		}
+		if (field.Dictionary()) |d| {
+			// std.debug.print("dictionary {any}\n", .{ d.Id() });
+
+			if (self.dictionaries.get(d.Id())) |v| {
+				v.tag = try toTag(field_type, field.Nullable());
+				res.children = try allocator.alloc(*Array, 1);
+				res.children[0] = v;
+			} else {
+				return IpcError.DictNotFound;
+			}
+		}
 		return res;
 	}
 
 	/// Caller owns Array.
-	fn readBatch(self: *Self, message: Message) !*Array {
+	fn readBatch(self: *Self, header: RecordBatch, buf: []u8) !*Array {
 		// https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
-		if (message.Header() == null) {
-			return IpcError.InvalidRecordBatchHeader;
-		}
-		self.node_index = 0;
-		self.buffer_index = 0;
-		const header = RecordBatch.init(message.Header().?.bytes, message.Header().?.pos);
-		const buf = try self.readMessageBody(message.BodyLength());
-
 		const allocator = self.arena.allocator();
+
 		const n_children = @intCast(usize, self.schema.FieldsLen());
 		var children = try allocator.alloc(*Array, n_children);
 
@@ -274,8 +298,8 @@ const RecordBatchReader = struct {
 			children[i] = try self.readField(header, buf, self.schema.Fields(i).?);
 		}
 
-		// std.debug.assert(self.node_index == @intCast(usize, header.NodesLen()));
-		// std.debug.assert(self.buffer_index == @intCast(usize, header.BuffersLen()));
+		std.debug.assert(self.node_index == @intCast(usize, header.NodesLen()));
+		std.debug.assert(self.buffer_index == @intCast(usize, header.BuffersLen()));
 
 		const res = try allocator.create(Array);
 		res.* = .{
@@ -290,21 +314,60 @@ const RecordBatchReader = struct {
 		return res;
 	}
 
+	fn readDict(self: *Self, header: DictionaryBatch, buf: []u8) !void {
+		const allocator = self.arena.allocator();
+
+		// const f = try DictionaryBatch.Unpack(header, .{ .allocator = allocator });
+		// std.debug.print("f {any}\n", .{ f.data.?.nodes });
+
+		const batch = header.Data().?;
+		const node = batch.Nodes(0).?;
+
+		const dict_values = try allocator.create(Array);
+		dict_values.* = .{
+			.tag = .null, // Schema has the info for this.
+			.name = "dict values",
+			.allocator = allocator,
+			.length = @intCast(usize, node.Length()),
+			.null_count = @intCast(usize, node.NullCount()),
+			.bufs = .{ &.{}, &.{}, &.{} },
+			.children = &.{},
+		};
+
+		for (0..batch.BuffersLen()) |i| {
+			dict_values.bufs[i] = self.readBuffer(batch, buf);
+		}
+
+		try self.dictionaries.put(header.Id(), dict_values);
+	}
+
 	/// Caller owns Array.
 	pub fn next(self: *Self) !?*Array {
 		if (try self.readMessage()) |message| {
+			self.node_index = 0;
+			self.buffer_index = 0;
 			switch (message.HeaderType()) {
 				.NONE => return IpcError.InvalidMessageType, 
 				.Schema => return IpcError.InvalidMessageType,
 				.DictionaryBatch => {
-					// std.debug.print("got a dict batch {any}\n", .{ message.BodyLength() });
-					const dict_buf = try self.readMessageBody(message.BodyLength());
-					_ = dict_buf;
+					if (message.Header() == null) {
+						return IpcError.InvalidDictionaryBatchHeader;
+					}
+					const header = DictionaryBatch.init(message.Header().?.bytes, message.Header().?.pos);
+					const buf = try self.readMessageBody(message.BodyLength());
+					try self.readDict(header, buf);
 
 					// Keep going until a record batch
 					return self.next();
 				},
-				.RecordBatch => return try self.readBatch(message)
+				.RecordBatch => {
+					if (message.Header() == null) {
+						return IpcError.InvalidRecordBatchHeader;
+					}
+					const header = RecordBatch.init(message.Header().?.bytes, message.Header().?.pos);
+					const buf = try self.readMessageBody(message.BodyLength());
+					return try self.readBatch(header, buf);
+				}
 			}
 		}
 		return null;
@@ -338,6 +401,13 @@ const RecordBatchReader = struct {
 const sample = @import("../sample.zig");
 
 fn testEquals(arr1: *Array, arr2: *Array) !void {
+	errdefer {
+		std.debug.print("expected: \n", .{});
+		arr1.print();
+
+		std.debug.print("actual: \n", .{});
+		arr2.print();
+	}
 	try std.testing.expectEqual(arr1.tag, arr2.tag);
 	try std.testing.expectEqualStrings(arr1.name, arr2.name);
 	try std.testing.expectEqual(arr1.length, arr2.length);

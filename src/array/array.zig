@@ -211,6 +211,24 @@ pub const Array = struct {
 		self.allocator.free(self.bufs[0]); // Free some memory.
 		self.bufs[0].len = 0; // Avoid double free.
 	}
+
+	fn print2(self: *Self, depth: u8) void {
+		const tab = (" " ** std.math.maxInt(u8))[0..depth*2];
+		std.debug.print("{s}Array \"{s}\": {any}\n", .{ tab, self.name, self.tag });
+		std.debug.print("{s}  null_count: {d} / {d}\n", .{ tab, self.null_count, self.length });
+		std.debug.print("{s}  bufs: ", .{ tab });
+		for (self.bufs) |b| {
+			std.debug.print("{d} ", .{ b.len });
+		}
+		std.debug.print("\n", .{});
+		for (self.children) |c| {
+			c.print2(depth + 1);
+		}
+	}
+
+	pub fn print(self: *Self) void {
+		self.print2(0);
+	}
 };
 
 const MaskInt = std.bit_set.DynamicBitSet.MaskInt;
