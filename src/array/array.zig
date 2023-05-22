@@ -216,11 +216,9 @@ pub const Array = struct {
 		const tab = (" " ** std.math.maxInt(u8))[0..depth*2];
 		std.debug.print("{s}Array \"{s}\": {any}\n", .{ tab, self.name, self.tag });
 		std.debug.print("{s}  null_count: {d} / {d}\n", .{ tab, self.null_count, self.length });
-		std.debug.print("{s}  bufs: ", .{ tab });
-		for (self.bufs) |b| {
-			std.debug.print("{d} ", .{ b.len });
+		for (self.bufs, 0..) |b, i| {
+			std.debug.print("{s}  buf{d}: {any}\n", .{ tab, i, b });
 		}
-		std.debug.print("\n", .{});
 		for (self.children) |c| {
 			c.print2(depth + 1);
 		}

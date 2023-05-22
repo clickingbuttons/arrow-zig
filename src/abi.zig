@@ -1,7 +1,6 @@
 const std = @import("std");
 
-// TODO: make IPC impl read each buffer into 64-byte aligned arraylist
-pub const BufferAlignment = 8;
+pub const BufferAlignment = 64;
 
 // https://arrow.apache.org/docs/format/CDataInterface.html#structure-definitions
 pub const Schema = extern struct {
