@@ -167,6 +167,9 @@ test "primitive finish" {
 
 	const masks = a.bufs[0];
 	try std.testing.expectEqual(@as(u8, 0b1101), masks[0]);
+
+	const values = std.mem.bytesAsSlice(T, a.bufs[1]);
+	try std.testing.expectEqualSlices(T, &[_]T{ 1, 0, 2, 4 }, values);
 }
 
 test "varbinary init + deinit" {
@@ -203,6 +206,8 @@ test "varbinary finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
+	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, s.len}, offsets);
 	try std.testing.expectEqualStrings(s, a.bufs[2][0..s.len]);
 }
 
@@ -220,10 +225,10 @@ test "c abi" {
 	try std.testing.expectEqual(@as(i64, 1), c.null_count);
 
 	const buf1 = @constCast(c.buffers.?[1].?);
-	const indices = @ptrCast([*]i32, @alignCast(@alignOf(i32), buf1));
-	try std.testing.expectEqual(@as(i32, 0), indices[0]);
-	try std.testing.expectEqual(@as(i32, 0), indices[1]);
-	try std.testing.expectEqual(@as(i32, 5), indices[2]);
+	const offsets = @ptrCast([*]i32, @alignCast(@alignOf(i32), buf1));
+	try std.testing.expectEqual(@as(i32, 0), offsets[0]);
+	try std.testing.expectEqual(@as(i32, 0), offsets[1]);
+	try std.testing.expectEqual(@as(i32, 5), offsets[2]);
 
 	const buf2 = @constCast(c.buffers.?[2].?);
 	const values = @ptrCast([*]u8, buf2);

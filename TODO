@@ -25,10 +25,12 @@
 	- [x] validity bitmask align(64)
 	- [x] good abi
 - [x] flatbuffers
-- [ ] ipc
+- [-] ipc
+	- [x] read
+	- [ ] write
 
 ## correctness
-- [ ] read all buffers for all tests
+- [x] read all buffers for all tests
 - [ ] 64 bytes align
 
 ## impl

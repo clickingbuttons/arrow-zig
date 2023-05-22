@@ -194,6 +194,8 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
+	const offsets = std.mem.bytesAsSlice(i8, a.bufs[1]);
+	try std.testing.expectEqualSlices(i8, &[_]i8{ 0, 1 }, offsets);
 	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1 }, a.children[0].bufs[1][0..2]);
 }
 

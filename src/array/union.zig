@@ -197,6 +197,8 @@ test "nullable dense union advanced with finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 1 }, a.bufs[0]);
+	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{ 0, 1, 2, 0 }, offsets);
 	try std.testing.expectEqual(@as(u8, 0b0101), a.children[0].bufs[0][0]);
 	try std.testing.expectEqual(@as(usize, 0), a.children[1].null_count);
 }

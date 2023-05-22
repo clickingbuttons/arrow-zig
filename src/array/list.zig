@@ -171,6 +171,8 @@ test "finish" {
 	defer a.deinit();
 
 	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
+	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 3}, offsets);
 }
 
 test "abi" {
