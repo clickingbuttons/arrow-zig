@@ -1,17 +1,26 @@
 const std = @import("std");
 const Footer = @import("./gen/Footer.fb.zig").Footer;
 const Message = @import("./gen/Message.fb.zig").Message;
-const Schema = @import("./gen/Schema.fb.zig").Schema;
-const RecordBatch = @import("./gen/RecordBatch.fb.zig").RecordBatch;
-const DictionaryBatch = @import("./gen/DictionaryBatch.fb.zig").DictionaryBatch;
-const DictionaryEncoding = @import("./gen/DictionaryEncoding.fb.zig").DictionaryEncoding;
-const array = @import("../array/array.zig");
+const schema_mod = @import("./gen/Schema.fb.zig");
+const record_batch = @import("./gen/RecordBatch.fb.zig");
+const dictionary_batch = @import("./gen/DictionaryBatch.fb.zig");
+const DictionaryEncoding = @import("./gen/DictionaryEncoding.fb.zig").DictionaryEncodingT;
+const array_mod = @import("../array/array.zig");
+const field_mod = @import("./gen/Field.fb.zig");
+const FieldNode = @import("./gen/FieldNode.fb.zig").FieldNodeT;
 const FieldType = @import("./gen/Type.fb.zig").TypeT;
-const Field = @import("./gen/Field.fb.zig").Field;
 const tags = @import("../tags.zig");
 const abi = @import("../abi.zig");
 
-const Array = array.Array;
+const Array = array_mod.Array;
+const BufferAlignment = array_mod.BufferAlignment;
+const BufferT = []align(BufferAlignment) u8;
+// We always have to read the entire schema, record batch, and dictionary headers from flatbuffers.
+// For this reason we unpack to these nice types to avoid writing `.?` on non-int property accesses.
+const Schema = schema_mod.SchemaT;
+const RecordBatch = record_batch.RecordBatchT;
+const DictionaryBatch = dictionary_batch.DictionaryBatchT;
+const Field = field_mod.FieldT;
 const magic = "ARROW1";
 const MessageLen = i32;
 const continuation = @bitCast(MessageLen, @as(u32, 0xffffffff));
@@ -93,10 +102,10 @@ fn toTag(tag: FieldType, is_nullable: bool) !tags.Tag {
 	};
 }
 
-fn toDictTag(dict: DictionaryEncoding) !tags.Tag {
+fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
 	return .{
 		.dictionary = .{
-			.index = switch (dict.IndexType().?.BitWidth()) {
+			.index = switch (dict.indexType.?.bitWidth) {
 				8 => .i8,
 				16 => .i16,
 				32 => .i32,
@@ -106,6 +115,40 @@ fn toDictTag(dict: DictionaryEncoding) !tags.Tag {
 	};
 }
 
+fn nFields2(f: Field) usize {
+	var res: usize = 0;
+	for (f.children.items) |c| {
+		res += 1 + nFields2(c);
+	}
+	return res;
+}
+
+fn nFields(schema: Schema) usize {
+	var res: usize = 0;
+	for (schema.fields.items) |f| {
+		res += 1 + nFields2(f);
+	}
+	return res;
+}
+
+fn nBuffers2(f: Field) !usize {
+	var res: usize = 0;
+	const tag = if (f.dictionary) |d| try toDictTag(d) else try toTag(f.type, f.nullable);
+	res += tag.abiLayout().nBuffers();
+	for (f.children.items) |c| {
+		res += try nBuffers2(c);
+	}
+	return res;
+}
+
+fn nBuffers(schema: Schema) !usize {
+	var res: usize = 0;
+	for (schema.fields.items) |f| {
+		res += try nBuffers2(f);
+	}
+	return res;
+}
+
 const RecordBatchReader = struct {
 	const Dictionaries = std.AutoHashMap(i64, *Array);
 
@@ -113,6 +156,8 @@ const RecordBatchReader = struct {
 	arena: std.heap.ArenaAllocator,
 	source: std.io.StreamSource,
 	schema: Schema,
+	n_fields: usize,
+	n_buffers: usize,
 	owns_file: bool = false,
 
 	node_index: usize = 0,
@@ -127,9 +172,13 @@ const RecordBatchReader = struct {
 			.arena = std.heap.ArenaAllocator.init(allocator),
 			.source = source,
 			.schema = undefined,
+			.n_fields = undefined,
+			.n_buffers = undefined,
 			.dictionaries = Dictionaries.init(allocator),
 		};
 		res.schema = try res.readSchema();
+		res.n_fields = nFields(res.schema);
+		res.n_buffers = try nBuffers(res.schema);
 		return res;
 	}
 
@@ -200,9 +249,9 @@ const RecordBatchReader = struct {
 				std.debug.print("expected initial schema message, got {any}", .{ message.HeaderType() });
 				return IpcError.InvalidSchemaMesssage;
 			}
-			// Header is the schema. I figured this out from reading arrow-rs.
 			if (message.Header()) |header| {
-				return Schema.init(header.bytes, header.pos);
+				const allocator = self.arena.allocator();
+				return schema_mod.Schema.init(header.bytes, header.pos).Unpack(.{ .allocator = allocator });
 			} else {
 				return IpcError.InvalidSchemaMesssage;
 			}
@@ -211,79 +260,60 @@ const RecordBatchReader = struct {
 		return IpcError.MissingSchemaMessage;
 	}
 
-	fn readBuffer(self: *Self, header: RecordBatch, body_len: i64) ![]align(abi.BufferAlignment) u8 {
+	fn readBuffers(self: *Self, batch: RecordBatch, body_len: i64) ![]BufferT {
 		const allocator = self.arena.allocator();
-		const n_buffers = @intCast(usize, header.BuffersLen());
-		std.debug.print("buf {d} / {d}\n", .{ self.buffer_index, n_buffers - 1 });
-		std.debug.assert(self.buffer_index < n_buffers);
-		const buffer = header.Buffers(self.buffer_index).?;
-		const offset = buffer.Offset();
-		const len = buffer.Length();
-		std.debug.assert(offset + len < body_len);
 
-		if (self.buffer_index > 0) {
-			const prev_buffer = header.Buffers(self.buffer_index - 1).?;
-			const prev_offset = prev_buffer.Offset();
-			const prev_len = prev_buffer.Length();
-			try self.source.seekBy(offset - prev_len - prev_offset);
+		var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
+		for (batch.buffers.items, 0..) |info, i| {
+			buffers[i] = try allocator.alignedAlloc(u8, BufferAlignment, @intCast(usize, info.length));
+			if (try self.source.read(buffers[i]) != buffers[i].len) {
+				// std.debug.print("ERROR: expected {d} bytes in record batch, got {d}\n", .{ 
+				return IpcError.InvalidRecordBatch;
+			}
+
+			const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
+			const seek = next_offset - (info.offset + info.length);
+			std.debug.print("seek {d}\n", .{ seek });
+			try self.source.seekBy(seek);
 		}
-		const buf = try allocator.alignedAlloc(u8, abi.BufferAlignment, @intCast(usize, len));
-		if (try self.source.read(buf) != buf.len) {
-			std.debug.print("record batch ended early\n", .{});
-			return IpcError.InvalidRecordBatch;
-		}
-		self.buffer_index += 1;
-		if (self.buffer_index == n_buffers) {
-			const to_seek = body_len - (offset + len);
-			std.debug.print("seek end {d}\n", .{ to_seek }); 
-			try self.source.seekBy(to_seek);
-		}
-		std.debug.print("buf {any} offset {d} len {d}\n", .{ buf.ptr, offset, len });
-		return buf;
+
+		return buffers;
 	}
 
-	fn readField(self: *Self, header: RecordBatch, body_len: i64, field: Field) !*Array {
-		// > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
-		// > record batch. 
+	fn readField(
+		self: *Self,
+		buffers: []BufferT,
+		nodes: []FieldNode,
+		field: Field
+	) !*Array {
 		const allocator = self.arena.allocator();
-		const field_type = try FieldType.Unpack(field.TypeType(), field.Type_().?, .{ .allocator = allocator });
-		const tag = if (field.Dictionary()) |d| try toDictTag(d) else try toTag(field_type, field.Nullable());
-
-		const layout = tag.abiLayout();
-		std.debug.print("node {d} / {d}\n", .{ self.node_index, header.NodesLen() });
-		std.debug.assert(self.node_index < @intCast(usize, header.NodesLen()));
-		const node = header.Nodes(self.node_index).?;
-		self.node_index += 1;
+		std.debug.print("read field {s} n_children {d}\n", .{ field.name, field.children.items.len });
 
 		var res = try allocator.create(Array);
 		res.* = .{
-			.tag = tag,
-			.name = field.Name(),
+			.tag = if (field.dictionary) |d| try toDictTag(d) else try toTag(field.type, field.nullable),
+			.name = field.name,
 			.allocator = allocator,
-			.length = @intCast(usize, node.Length()),
-			.null_count = @intCast(usize, node.NullCount()),
+			.length = @intCast(usize, nodes[self.node_index].length),
+			.null_count = @intCast(usize, nodes[self.node_index].null_count),
 			.bufs = .{ &.{}, &.{}, &.{} },
-			.children = &.{},
+			.children = try allocator.alloc(*Array, field.children.items.len),
 		};
+		self.node_index += 1;
 
-		for (0..layout.nBuffers()) |i| {
-			res.bufs[i] = try self.readBuffer(header, body_len);
+		for (0..res.tag.abiLayout().nBuffers()) |i| {
+			res.bufs[i] = buffers[self.buffer_index];
+			self.buffer_index += 1;
 		}
 
-		const n_children = @intCast(usize, field.ChildrenLen());
-		std.debug.print("field {s} n_children {d}\n", .{ field.Name(), n_children });
-		if (n_children > 0) {
-			res.children = try allocator.alloc(*Array, n_children);
-
-			for (0..n_children) |i| {
-				res.children[i] = try self.readField(header, body_len, field.Children(i).?);
-			}
+		for (field.children.items, 0..) |field_c, i| {
+			res.children[i] = try self.readField(buffers, nodes, field_c);
 		}
-		if (field.Dictionary()) |d| {
+		if (field.dictionary) |d| {
 			// std.debug.print("dictionary {any}\n", .{ d.Id() });
 
-			if (self.dictionaries.get(d.Id())) |v| {
-				v.tag = try toTag(field_type, field.Nullable());
+			if (self.dictionaries.get(d.id)) |v| {
+				v.tag = try toTag(field.type, field.nullable);
 				res.children = try allocator.alloc(*Array, 1);
 				res.children[0] = v;
 			} else {
@@ -294,26 +324,40 @@ const RecordBatchReader = struct {
 	}
 
 	/// Caller owns Array.
-	fn readBatch(self: *Self, header: RecordBatch, body_len: i64) !*Array {
+	fn readBatch(self: *Self, batch: RecordBatch, body_len: i64) !*Array {
 		// https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
+		// > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
+		// > record batch.
+		std.debug.print("read batch {any}\n", .{ batch });
 		const allocator = self.arena.allocator();
 
-		const n_children = @intCast(usize, self.schema.FieldsLen());
-		var children = try allocator.alloc(*Array, n_children);
-
-		for (0..n_children) |i| {
-			children[i] = try self.readField(header, body_len, self.schema.Fields(i).?);
+		// Quickly check that the number of buffers and field nodes matches the schema.
+		if (batch.buffers.items.len != self.n_buffers) {
+			std.debug.print("WARN: skipped batch with {d} buffers (schema expects {d})\n",
+				.{ batch.buffers.items.len, self.n_buffers });
+		}
+		if (batch.nodes.items.len != self.n_fields) {
+			std.debug.print("WARN: skipped batch with {d} fields (schema expects {d})\n",
+				.{ batch.nodes.items.len, self.n_fields });
 		}
 
-		std.debug.assert(self.node_index == @intCast(usize, header.NodesLen()));
-		std.debug.assert(self.buffer_index == @intCast(usize, header.BuffersLen()));
+		// Read flattened buffers
+		const buffers = try self.readBuffers(batch, body_len);
+
+		// Recursively read tags, name, and buffers into arrays from `schema.fields`
+		self.node_index = 0;
+		self.buffer_index = 0;
+		var children = try allocator.alloc(*Array, self.schema.fields.items.len);
+		for (self.schema.fields.items, 0..) |f, i| {
+			children[i] = try self.readField(buffers, batch.nodes.items, f);
+		}
 
 		const res = try allocator.create(Array);
 		res.* = .{
 			.tag = .{ .struct_ = .{ .is_nullable = false } },
 			.name = "record batch",
 			.allocator = allocator,
-			.length = @intCast(usize, header.Length()),
+			.length = @intCast(usize, batch.length),
 			.null_count = 0,
 			.bufs = .{ &.{}, &.{}, &.{} },
 			.children = children,
@@ -321,57 +365,64 @@ const RecordBatchReader = struct {
 		return res;
 	}
 
-	fn readDict(self: *Self, header: DictionaryBatch, body_len: i64) !void {
+	fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
 		const allocator = self.arena.allocator();
 
-		// const f = try DictionaryBatch.Unpack(header, .{ .allocator = allocator });
-		// std.debug.print("f {any}\n", .{ f.data.?.nodes });
+		std.debug.print("read_dict {any}\n", .{dict});
 
-		const batch = header.Data().?;
-		const node = batch.Nodes(0).?;
+		const batch = dict.data.?.*;
+		const node = batch.nodes.items[0];
 
 		const dict_values = try allocator.create(Array);
 		dict_values.* = .{
-			.tag = .null, // Schema has the info for this.
+			.tag = .null, // Schema has the info for this but not the ID.
 			.name = "dict values",
 			.allocator = allocator,
-			.length = @intCast(usize, node.Length()),
-			.null_count = @intCast(usize, node.NullCount()),
+			.length = @intCast(usize, node.length),
+			.null_count = @intCast(usize, node.null_count),
 			.bufs = .{ &.{}, &.{}, &.{} },
 			.children = &.{},
 		};
 
-		for (0..batch.BuffersLen()) |i| {
-			dict_values.bufs[i] = try self.readBuffer(batch, body_len);
+		const buffers = try self.readBuffers(batch, body_len);
+		for (0..buffers.len) |i| {
+			dict_values.bufs[i] = buffers[i];
 		}
 
-		try self.dictionaries.put(header.Id(), dict_values);
+		try self.dictionaries.put(dict.id, dict_values);
 	}
 
 	/// Caller owns Array.
 	pub fn next(self: *Self) !?*Array {
+		const allocator = self.arena.allocator();
 		if (try self.readMessage()) |message| {
 			self.node_index = 0;
 			self.buffer_index = 0;
 			switch (message.HeaderType()) {
-				.NONE => return IpcError.InvalidMessageType, 
-				.Schema => return IpcError.InvalidMessageType,
+				.NONE, .Schema => {
+					std.debug.print("WARN: got {any} message\n", .{ message.HeaderType() });
+					try self.source.seekBy(message.BodyLength());
+				},
 				.DictionaryBatch => {
-					if (message.Header() == null) {
-						return IpcError.InvalidDictionaryBatchHeader;
-					}
-					const header = DictionaryBatch.init(message.Header().?.bytes, message.Header().?.pos);
-					try self.readDict(header, message.BodyLength());
+					if (message.Header()) |header| {
+						const dict = try dictionary_batch.DictionaryBatch
+							.init(header.bytes, header.pos)
+							.Unpack(.{ .allocator = allocator });
+						try self.readDict(dict, message.BodyLength());
 
-					// Keep going until a record batch
-					return self.next();
+						// Keep going until a record batch
+						return self.next();
+					}
+					return IpcError.InvalidDictionaryBatchHeader;
 				},
 				.RecordBatch => {
-					if (message.Header() == null) {
-						return IpcError.InvalidRecordBatchHeader;
+					if (message.Header()) |header| {
+						const record = try record_batch.RecordBatch
+							.init(header.bytes, header.pos)
+							.Unpack(.{ .allocator = allocator });
+						return try self.readBatch(record, message.BodyLength());
 					}
-					const header = RecordBatch.init(message.Header().?.bytes, message.Header().?.pos);
-					return try self.readBatch(header, message.BodyLength());
+					return IpcError.InvalidRecordBatchHeader;
 				}
 			}
 		}
@@ -432,12 +483,12 @@ test "example file path" {
 	const expected = try sample.sampleArray(std.testing.allocator);
 	try expected.toRecordBatch("record batch");
 	defer expected.deinit();
-	try std.testing.expectEqual(@intCast(u32, expected.children.len), ipc_reader.schema.FieldsLen());
+	try std.testing.expectEqual(expected.children.len, ipc_reader.schema.fields.items.len);
 
 	var n_batches: usize = 0;
-	while (try ipc_reader.next()) |record_batch| {
+	while (try ipc_reader.next()) |rb| {
 		// defer record_batch.deinit();
-		try testEquals(expected, record_batch);
+		try testEquals(expected, rb);
 		n_batches += 1;
 	}
 	try std.testing.expectEqual(@as(usize, 1), n_batches);

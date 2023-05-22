@@ -99,7 +99,7 @@ pub const FieldT = struct {
         t.nullable = rcv.Nullable();
 
         if (rcv.Type_()) |_tab| {
-            t.type = try TypeT.Unpack(rcv.Type_Type(), _tab, __pack_opts);
+            t.type = try TypeT.Unpack(rcv.TypeType(), _tab, __pack_opts);
         }
 
         if (rcv.Dictionary()) |x| {

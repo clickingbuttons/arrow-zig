@@ -27,11 +27,14 @@
 - [x] flatbuffers
 - [-] ipc
 	- [x] read
+		- [ ] safer
+		- [ ] error messages
+		- [ ] owned memory
 	- [ ] write
 
 ## correctness
 - [x] read all buffers for all tests
-- [ ] 64 bytes align
+- [x] 64 bytes align
 
 ## impl
 - [ ] more dict types
