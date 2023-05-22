@@ -29,8 +29,9 @@
 	- [x] read
 		- [x] safer
 		- [x] error messages
-		- [ ] owned memory
+		- [x] owned memory
 		- [ ] compression
+		- [ ] file dictionaries in wrong order
 	- [ ] write
 
 ## correctness
