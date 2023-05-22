@@ -27,9 +27,10 @@
 - [x] flatbuffers
 - [-] ipc
 	- [x] read
-		- [ ] safer
-		- [ ] error messages
+		- [x] safer
+		- [x] error messages
 		- [ ] owned memory
+		- [ ] compression
 	- [ ] write
 
 ## correctness

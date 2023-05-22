@@ -24,7 +24,10 @@ const Field = field_mod.FieldT;
 const magic = "ARROW1";
 const MessageLen = i32;
 const continuation = @bitCast(MessageLen, @as(u32, 0xffffffff));
-const IpcError = error {
+
+const log = std.log.scoped(.arrow_ipc);
+
+pub const IpcError = error {
 	InvalidMagicLen,
 	InvalidMagic,
 	InvalidLen,
@@ -35,65 +38,111 @@ const IpcError = error {
 	InvalidRecordBatch,
 	InvalidRecordBatchHeader,
 	InvalidBitWidth,
+	InvalidFieldTag,
 	InvalidDictionaryBatchHeader,
 	InvalidDictionaryIndexType,
 	DictNotFound,
+	NoDictionaryData,
 };
 
-fn toTag(tag: FieldType, is_nullable: bool) !tags.Tag {
-	return switch(tag) {
+fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
+	return .{
+		.dictionary = .{
+			.index = if (dict.indexType) |t| switch (t.bitWidth) {
+				8 => .i8,
+				16 => .i16,
+				32 => .i32,
+				else => |w| {
+					log.warn("dictionary {d} has invalid index bit width {d}", .{ dict.id, w });
+					return IpcError.InvalidDictionaryIndexType;
+				}
+			} else {
+				log.warn("dictionary {d} missing index type", .{ dict.id });
+				return IpcError.InvalidDictionaryIndexType;
+			}
+		}
+	};
+}
+
+fn toFieldTag(field: Field) !tags.Tag {
+	return switch(field.type) {
 		.Null => .null,
-		.Int => |i| switch (i.?.bitWidth) {
-			8 => switch (i.?.is_signed) {
-				 true => .{ .i8 = .{ .is_nullable = is_nullable } },
-				 false => .{ .u8 = .{ .is_nullable = is_nullable } },
-			},
-			16 => switch (i.?.is_signed) {
-				 true => .{ .i16 = .{ .is_nullable = is_nullable } },
-				 false => .{ .u16 = .{ .is_nullable = is_nullable } },
-			},
-			32 => switch (i.?.is_signed) {
-				 true => .{ .i32 = .{ .is_nullable = is_nullable } },
-				 false => .{ .u32 = .{ .is_nullable = is_nullable } },
-			},
-			64 => switch (i.?.is_signed) {
-				 true => .{ .i64 = .{ .is_nullable = is_nullable } },
-				 false => .{ .u64 = .{ .is_nullable = is_nullable } },
-			},
-		 else => IpcError.InvalidBitWidth,
+		.Int => |maybe_i| {
+			if (maybe_i) |i| {
+				return switch (i.bitWidth) {
+					8 => switch (i.is_signed) {
+						 true => .{ .i8 = .{ .is_nullable = field.nullable } },
+						 false => .{ .u8 = .{ .is_nullable = field.nullable } },
+					},
+					16 => switch (i.is_signed) {
+						 true => .{ .i16 = .{ .is_nullable = field.nullable } },
+						 false => .{ .u16 = .{ .is_nullable = field.nullable } },
+					},
+					32 => switch (i.is_signed) {
+						 true => .{ .i32 = .{ .is_nullable = field.nullable } },
+						 false => .{ .u32 = .{ .is_nullable = field.nullable } },
+					},
+					64 => switch (i.is_signed) {
+						 true => .{ .i64 = .{ .is_nullable = field.nullable } },
+						 false => .{ .u64 = .{ .is_nullable = field.nullable } },
+					},
+					else => |w| {
+						log.warn("int field {s} invalid bit width {d}", .{ field.name, w });
+						return IpcError.InvalidBitWidth;
+					}
+				};
+			}
+			log.warn("int field {s} missing bit width", .{ field.name });
+			return IpcError.InvalidFieldTag;
 		},
-		.FloatingPoint => |f| switch (f.?.precision) {
-			.HALF => .{ .f16 = .{ .is_nullable = is_nullable } },
-			.SINGLE => .{ .f32 = .{ .is_nullable = is_nullable } },
-			.DOUBLE => .{ .f64 = .{ .is_nullable = is_nullable } },
+		.FloatingPoint => |maybe_f| if (maybe_f) |f| switch (f.precision) {
+			.HALF => .{ .f16 = .{ .is_nullable = field.nullable } },
+			.SINGLE => .{ .f32 = .{ .is_nullable = field.nullable } },
+			.DOUBLE => .{ .f64 = .{ .is_nullable = field.nullable } },
+		} else {
+			log.warn("float field {s} missing precision", .{ field.name });
+			return IpcError.InvalidFieldTag;
 		},
 		.Binary => .{ .binary = .{ .is_large = false, .is_utf8 = false } },
 		.LargeBinary => .{ .binary = .{ .is_large = true, .is_utf8 = false } },
 		.Utf8 => .{ .binary = .{ .is_large = false, .is_utf8 = true } },
 		.LargeUtf8 => .{ .binary = .{ .is_large = true, .is_utf8 = true } },
-		.Bool => .{ .bool = .{ .is_nullable = is_nullable } },
+		.Bool => .{ .bool = .{ .is_nullable = field.nullable } },
 		// .Decimal: ?*DecimalT,
 		// .Date: ?*DateT,
 		// .Time: ?*TimeT,
 		// .Timestamp: ?*TimestampT,
 		// .Interval: ?*IntervalT,
-		.List => .{ .list = .{ .is_nullable = is_nullable, .is_large = false } },
-		.LargeList => .{ .list = .{ .is_nullable = is_nullable, .is_large = true } },
-		.Struct_ => .{ .struct_ = .{ .is_nullable = is_nullable } },
-		.Union => |u| switch (u.?.mode) {
-			.Sparse => .{ .union_ = .{ .is_nullable = is_nullable, .is_dense = false } },
-			.Dense => .{ .union_ = .{ .is_nullable = is_nullable, .is_dense = true } },
+		.List => .{ .list = .{ .is_nullable = field.nullable, .is_large = false } },
+		.LargeList => .{ .list = .{ .is_nullable = field.nullable, .is_large = true } },
+		.Struct_ => .{ .struct_ = .{ .is_nullable = field.nullable } },
+		.Union => |maybe_u| if (maybe_u) |u| switch (u.mode) {
+			.Sparse => .{ .union_ = .{ .is_nullable = field.nullable, .is_dense = false } },
+			.Dense => .{ .union_ = .{ .is_nullable = field.nullable, .is_dense = true } },
+		} else {
+			log.warn("union field {s} missing mode", .{ field.name });
+			return IpcError.InvalidFieldTag;
 		},
-		.FixedSizeBinary => |b| .{ .list_fixed = .{
-			.is_nullable = is_nullable,
-			.fixed_len = @intCast(i16, b.?.byteWidth),
-			.is_large = false,
-		} },
-		.FixedSizeList => |f| .{ .list_fixed = .{
-			.is_nullable = is_nullable,
-			.fixed_len = @intCast(i16, f.?.listSize),
-			.is_large = false,
-		} },
+		.FixedSizeBinary => |maybe_b| if (maybe_b) |b| .{
+			.list_fixed = .{
+				.is_nullable = field.nullable,
+				.fixed_len = @intCast(i16, b.byteWidth),
+				.is_large = false,
+			}
+		} else {
+			log.warn("fixed size binary field {s} missing byte width", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.FixedSizeList => |maybe_f| if (maybe_f) |f| .{
+			.list_fixed = .{
+				.is_nullable = field.nullable,
+				.fixed_len = @intCast(i16, f.listSize),
+				.is_large = false,
+			}
+		} else {
+			log.warn("fixed size list field {s} missing fixed length", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
 		// .Map: ?*MapT,
 		// .Duration: ?*DurationT,
 		// .NONE: void,
@@ -102,17 +151,10 @@ fn toTag(tag: FieldType, is_nullable: bool) !tags.Tag {
 	};
 }
 
-fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
-	return .{
-		.dictionary = .{
-			.index = switch (dict.indexType.?.bitWidth) {
-				8 => .i8,
-				16 => .i16,
-				32 => .i32,
-				else => return IpcError.InvalidDictionaryIndexType,
-			}
-		}
-	};
+fn toTag(field: Field) !tags.Tag {
+	if (field.dictionary) |d| return toDictTag(d);
+
+	return toFieldTag(field);
 }
 
 fn nFields2(f: Field) usize {
@@ -133,8 +175,7 @@ fn nFields(schema: Schema) usize {
 
 fn nBuffers2(f: Field) !usize {
 	var res: usize = 0;
-	const tag = if (f.dictionary) |d| try toDictTag(d) else try toTag(f.type, f.nullable);
-	res += tag.abiLayout().nBuffers();
+	res += (try toTag(f)).abiLayout().nBuffers();
 	for (f.children.items) |c| {
 		res += try nBuffers2(c);
 	}
@@ -236,7 +277,7 @@ const RecordBatchReader = struct {
 		const res = try self.arena.allocator().alignedAlloc(u8, abi.BufferAlignment, real_size);
 		const n_read = try self.source.reader().read(res);
 		if (n_read != res.len) {
-			std.debug.print("record batch ended early\n", .{});
+			log.err("record batch ended early", .{});
 			return IpcError.InvalidRecordBatch;
 		}
 
@@ -246,7 +287,7 @@ const RecordBatchReader = struct {
 	fn readSchema(self: *Self) !Schema {
 		if (try self.readMessage()) |message| {
 			if (message.HeaderType() != .Schema) {
-				std.debug.print("expected initial schema message, got {any}", .{ message.HeaderType() });
+				log.err("expected initial schema message, got {any}", .{ message.HeaderType() });
 				return IpcError.InvalidSchemaMesssage;
 			}
 			if (message.Header()) |header| {
@@ -266,14 +307,15 @@ const RecordBatchReader = struct {
 		var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
 		for (batch.buffers.items, 0..) |info, i| {
 			buffers[i] = try allocator.alignedAlloc(u8, BufferAlignment, @intCast(usize, info.length));
-			if (try self.source.read(buffers[i]) != buffers[i].len) {
-				// std.debug.print("ERROR: expected {d} bytes in record batch, got {d}\n", .{ 
+			const n_read = try self.source.read(buffers[i]);
+			if (buffers[i].len != n_read) {
+				log.err("expected {d} bytes in record batch body, got {d}",
+					.{ buffers[i].len, n_read });
 				return IpcError.InvalidRecordBatch;
 			}
 
 			const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
 			const seek = next_offset - (info.offset + info.length);
-			std.debug.print("seek {d}\n", .{ seek });
 			try self.source.seekBy(seek);
 		}
 
@@ -287,11 +329,11 @@ const RecordBatchReader = struct {
 		field: Field
 	) !*Array {
 		const allocator = self.arena.allocator();
-		std.debug.print("read field {s} n_children {d}\n", .{ field.name, field.children.items.len });
+		log.debug("read field \"{s}\" n_children {d}", .{ field.name, field.children.items.len });
 
 		var res = try allocator.create(Array);
 		res.* = .{
-			.tag = if (field.dictionary) |d| try toDictTag(d) else try toTag(field.type, field.nullable),
+			.tag = try toTag(field),
 			.name = field.name,
 			.allocator = allocator,
 			.length = @intCast(usize, nodes[self.node_index].length),
@@ -310,10 +352,9 @@ const RecordBatchReader = struct {
 			res.children[i] = try self.readField(buffers, nodes, field_c);
 		}
 		if (field.dictionary) |d| {
-			// std.debug.print("dictionary {any}\n", .{ d.Id() });
-
+			log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
 			if (self.dictionaries.get(d.id)) |v| {
-				v.tag = try toTag(field.type, field.nullable);
+				v.tag = try toFieldTag(field);
 				res.children = try allocator.alloc(*Array, 1);
 				res.children[0] = v;
 			} else {
@@ -328,16 +369,16 @@ const RecordBatchReader = struct {
 		// https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
 		// > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
 		// > record batch.
-		std.debug.print("read batch {any}\n", .{ batch });
+		log.debug("read batch len {d} compression {any}", .{ batch.length, batch.compression });
 		const allocator = self.arena.allocator();
 
 		// Quickly check that the number of buffers and field nodes matches the schema.
 		if (batch.buffers.items.len != self.n_buffers) {
-			std.debug.print("WARN: skipped batch with {d} buffers (schema expects {d})\n",
+			log.warn("skipped batch with {d} buffers (schema expects {d})",
 				.{ batch.buffers.items.len, self.n_buffers });
 		}
 		if (batch.nodes.items.len != self.n_fields) {
-			std.debug.print("WARN: skipped batch with {d} fields (schema expects {d})\n",
+			log.warn("skipped batch with {d} fields (schema expects {d})",
 				.{ batch.nodes.items.len, self.n_fields });
 		}
 
@@ -368,9 +409,10 @@ const RecordBatchReader = struct {
 	fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
 		const allocator = self.arena.allocator();
 
-		std.debug.print("read_dict {any}\n", .{dict});
+		log.debug("read_dict {d}", .{dict.id});
 
-		const batch = dict.data.?.*;
+		
+		const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
 		const node = batch.nodes.items[0];
 
 		const dict_values = try allocator.create(Array);
@@ -400,7 +442,7 @@ const RecordBatchReader = struct {
 			self.buffer_index = 0;
 			switch (message.HeaderType()) {
 				.NONE, .Schema => {
-					std.debug.print("WARN: got {any} message\n", .{ message.HeaderType() });
+					log.warn("ignoring unexpected message {any}", .{ message.HeaderType() });
 					try self.source.seekBy(message.BodyLength());
 				},
 				.DictionaryBatch => {
@@ -478,6 +520,7 @@ fn testEquals(arr1: *Array, arr2: *Array) !void {
 }
 
 test "example file path" {
+	std.testing.log_level = .debug;
 	var ipc_reader = try RecordBatchReader.initFilePath(std.testing.allocator, "./example.arrow");
 	defer ipc_reader.deinit();
 	const expected = try sample.sampleArray(std.testing.allocator);
