@@ -21,16 +21,16 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 		f: flat.Builder(?f32),
 	};
 	const T = struct {
-		a: flat.BuilderAdvanced(?[]const u8, .{ .is_large = false, .is_utf8 = true }),
+		a: flat.BuilderAdvanced(?[]const u8, .{ .large = false, .utf8 = true }),
 		b: builder.Builder(?i32),
 		c: builder.Builder(?[]i32),
 		d: builder.Builder(?[2]i32),
 		e: builder.Builder(?StructT),
 		f: builder.Builder(?UnionT),
-		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .is_nullable = true, .is_dense = false }, void),
+		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .nullable = true, .dense = false }, void),
 		h: dict.Builder(?u32),
 	};
-	var b = try struct_.BuilderAdvanced(T, .{ .is_nullable = true }, void).init(allocator);
+	var b = try struct_.BuilderAdvanced(T, .{ .nullable = true }, void).init(allocator);
 	{
 		errdefer b.deinit();
 

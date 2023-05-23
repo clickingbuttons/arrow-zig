@@ -2,70 +2,117 @@ const std = @import("std");
 const abi = @import("./abi.zig");
 const flat = @import("./array/flat.zig");
 
-pub const PrimitiveOptions = struct {
-	is_nullable: bool
+pub const NullableOptions = struct {
+	nullable: bool,
+};
+
+pub const IntOptions = struct {
+	nullable: bool,
+	signed: bool,
+	bit_width: enum {
+		_8,
+		_16,
+		_32,
+		_64,
+	},
+};
+
+pub const FloatOptions = struct {
+	nullable: bool,
+	bit_width: enum {
+		_16,
+		_32,
+		_64,
+	},
 };
 
 pub const BinaryOptions = struct {
-	is_large: bool = false,
-	is_utf8: bool = false
+	large: bool = false,
+	utf8: bool = false,
+};
+
+pub const FixedBinaryOptions = struct {
+	nullable: bool,
+	fixed_len: i32,
 };
 
 pub const ListOptions = struct {
-	is_nullable: bool,
-	is_large: bool = false,
+	nullable: bool,
+	large: bool = false,
 };
 
 pub const FixedListOptions = struct {
-	is_nullable: bool,
-	fixed_len: i16,
-	is_large: bool = false,
+	nullable: bool,
+	fixed_len: i32,
+	large: bool = false,
 };
 
 pub const UnionOptions = struct {
-	is_nullable: bool, // Just used for zig type safety.
-	is_dense: bool = true,
-};
-
-pub const DictIndex = enum {
-	// i64, // Currently zig hashmaps use u32s for capacity.
-	i32,
-	i16,
-	i8,
+	nullable: bool, // Just used for zig type safety.
+	dense: bool = true,
 };
 
 pub const DictOptions = struct {
-	index: DictIndex,
+	index: enum {
+		i8,
+		i16,
+		i32,
+		// i64, // Currently zig hashmaps use u32s for capacity.
+	},
+};
+
+pub const DateOptions = struct {
+	nullable: bool,
+	unit: enum {
+		day,
+		millisecond
+	},
+};
+
+const TimeUnit = enum {
+	second, // i32
+	millisecond, // i32
+	microsecond, // i64
+	nanosecond, // i64
+};
+
+pub const TimeOptions = struct {
+	nullable: bool,
+	unit: TimeUnit,
+};
+
+pub const TimestampOptions = struct {
+	nullable: bool,
+	unit: TimeUnit,
+	timezone: []const u8,
+};
+
+pub const IntervalOptions = struct {
+	nullable: bool,
+	unit: enum {
+		year_month,
+		day_time,
+		month_day_nanosecond,
+	},
 };
 
 pub const Tag = union(enum) {
-	null,
-	bool: PrimitiveOptions,
-	i64: PrimitiveOptions,
-	i32: PrimitiveOptions,
-	i16: PrimitiveOptions,
-	i8: PrimitiveOptions,
-	u64: PrimitiveOptions,
-	u32: PrimitiveOptions,
-	u16: PrimitiveOptions,
-	u8: PrimitiveOptions,
-	f64: PrimitiveOptions,
-	f32: PrimitiveOptions,
-	f16: PrimitiveOptions,
-	// Timestamp(TimeUnit, Option<Arc<str>>),
-	// date64,
-	// date32,
-	// Time32(TimeUnit),
-	// Time64(TimeUnit),
-	// Duration(TimeUnit),
-	// Interval(IntervalUnit),
-	binary: BinaryOptions,
-	// FixedSizeBinary(i32),
-	list: ListOptions,
-	list_fixed: FixedListOptions,
-	struct_: PrimitiveOptions,
-	union_: UnionOptions,
-	dictionary: DictOptions,
+	Null,
+	Bool: NullableOptions,
+	Int: IntOptions,
+	Float: FloatOptions,
+	Date: DateOptions,
+	Time: TimeOptions,
+	Timestamp: TimestampOptions,
+	Duration: TimeOptions,
+	Interval: IntervalOptions,
+	Binary: BinaryOptions,
+	FixedBinary: FixedBinaryOptions,
+	List: ListOptions,
+	FixedList: FixedListOptions,
+	Struct: NullableOptions,
+	Union: UnionOptions,
+	Dictionary: DictOptions,
 	// Decimal128(u8, i8),
 	// Decimal256(u8, i8),
 	// Map(FieldRef, bool),
@@ -75,68 +122,73 @@ pub const Tag = union(enum) {
 	pub fn fromPrimitive(comptime T: type, comptime opts: BinaryOptions) Self {
 		const is_nullable = @typeInfo(T) == .Optional;
 		const ChildType = if (is_nullable) @typeInfo(T).Optional.child else T;
-		const primitive_opts = PrimitiveOptions { .is_nullable = is_nullable };
 		// https://github.com/ziglang/zig/blob/94e30a756edc4c2182168dabd97d481b8aec0ff2/lib/std/builtin.zig#L228
 		return switch (@typeInfo(ChildType)) {
 			.Void, .Null => .null,
-			.Bool => Self { .bool = primitive_opts },
-			.Int => |info| switch (info.bits) {
-				64 => switch (info.signedness) {
-					.signed => Self { .i64 = primitive_opts },
-					.unsigned => Self { .u64 = primitive_opts },
-				},
-				32 => switch (info.signedness) {
-					.signed => Self { .i32 = primitive_opts },
-					.unsigned => Self { .u32 = primitive_opts },
-				},
-				16 => switch (info.signedness) {
-					.signed => Self { .i16 = primitive_opts },
-					.unsigned => Self { .u16 = primitive_opts },
-				},
-				8 => switch (info.signedness) {
-					.signed => Self { .i8 = primitive_opts },
-					.unsigned => Self { .u8 = primitive_opts },
-				},
-				else => |w| @compileError(std.fmt.comptimePrint("unsupported int width {}", .{w})),
+			.Bool => .{ .Bool = .{ .nullable = is_nullable } },
+			.Int => |info| .{
+				.Int = .{
+					.nullable = is_nullable,
+					.signed = switch (info.signedness) {
+						.signed => true,
+						.unsigned => false
+					},
+					.bit_width = switch (info.bits) {
+						8 => ._8,
+						16 => ._16,
+						32 => ._32,
+						64 => ._64,
+						else => |w| @compileError(std.fmt.comptimePrint("unsupported int width {}", .{w})),
+					}
+				}
 			},
-			.Float => |info| switch (info.bits) {
-				64 => Self { .f64 = primitive_opts },
-				32 => Self { .f32 = primitive_opts },
-				16 => Self { .f16 = primitive_opts },
-				else => |w| @compileError(std.fmt.comptimePrint("unsupported float width {}", .{w})),
+			.Float => |info| .{
+				.Float = .{
+					.nullable = is_nullable,
+					.bit_width = switch (info.bits) {
+						16 => ._16,
+						32 => ._32,
+						64 => ._64,
+						else => |w| @compileError(std.fmt.comptimePrint("unsupported float width {}", .{w})),
+					}
+				}
 			},
 			.Pointer => |p| switch (p.size) {
 				.Slice => switch (p.child) {
-					u8, ?u8 => Self { .binary = opts },
+					u8, ?u8 => .{ .Binary = opts },
 					else => @compileError("unsupported slice type " ++ @typeName(T))
 				},
 				else => @compileError("unsupported abi type " ++ @typeName(T))
 			},
+			.Struct => .{ .Struct = .{ .nullable = is_nullable } },
+			.Union => .{ .Union = .{ .nullable = is_nullable } },
 			else => @compileError("unsupported abi type " ++ @typeName(T)),
 		};
 	}
 
 	test "tag types" {
-		try std.testing.expectEqual(Tag.u8, Tag.fromPrimitive(u8, .{}));
-		try std.testing.expectEqual(Tag.i32, Tag.fromPrimitive(?i32, .{}));
-		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitive([]u8, .{}));
-		try std.testing.expectEqual(Tag.binary, Tag.fromPrimitive([]?u8, .{}));
+		try std.testing.expectEqual(Tag.Int, Tag.fromPrimitive(u8, .{}));
+		try std.testing.expectEqual(Tag.Int, Tag.fromPrimitive(?i32, .{}));
+		try std.testing.expectEqual(Tag.Binary, Tag.fromPrimitive([]u8, .{}));
+		try std.testing.expectEqual(Tag.Binary, Tag.fromPrimitive([]?u8, .{}));
 	}
 
 	pub fn Primitive(comptime self: Self) type {
 		return switch (self) {
-			.bool => bool,
-			.i64 => i64,
-			.i32 => i32,
-			.i16 => i16,
-			.i8 => i8,
-			.u64 => u64,
-			.u32 => u32,
-			.u16 => u16,
-			.u8, .binary => u8,
-			.f64 => f64,
-			.f32 => f32,
-			.f16 => f16,
+			.Null => void,
+			.Bool => bool,
+			.Int => |i| switch (i.bit_width) {
+				._8 => if (i.signed) i8 else u8,
+				._16 => if (i.signed) i16 else u16,
+				._32 => if (i.signed) i32 else u32,
+				._64 => if (i.signed) i64 else u64,
+			},
+			.Binary => u8,
+			.Float => |f| switch (f.bit_width) {
+				._16 => f16,
+				._32 => f32,
+				._64 => f64,
+			},
 			else => @compileError(@tagName(self) ++ " is not a primitive")
 		};
 	}
@@ -145,41 +197,82 @@ pub const Tag = union(enum) {
 		// https://github.com/ziglang/zig/blob/94e30a756edc4c2182168dabd97d481b8aec0ff2/lib/std/builtin.zig#L228
 		// https://arrow.apache.org/docs/format/Columnar.html#buffer-listing-for-each-layout
 		return switch (self) {
-			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, => .Primitive,
-			.binary => .VariableBinary,
-			.list => .List,
-			.list_fixed => .FixedList,
-			.struct_ => .Struct,
-			.union_ => |u| if (u.is_dense) .DenseUnion else .SparseUnion,
-			.null => .Null,
-			.dictionary => .Dictionary,
+			.Bool, .Int, .Float, .Date, .Time, .Timestamp, .Duration, .Interval, .FixedBinary, => .Primitive,
+			.Binary => .VariableBinary,
+			.List => .List,
+			.FixedList => .FixedList,
+			.Struct => .Struct,
+			.Union => |u| if (u.dense) .DenseUnion else .SparseUnion,
+			.Null => .Null,
+			.Dictionary => .Dictionary,
 		};
 	}
 
 	pub fn abiFormat(self: Self, allocator: std.mem.Allocator, n_children: usize) ![*:0]const u8 {
 		return switch (self) {
-			.null => "n",
-			.bool => "b",
-			.i64 => "l",
-			.u64 => "L",
-			.i32 => "i",
-			.u32 => "I",
-			.i16 => "s",
-			.u16 => "S",
-			.i8 => "c",
-			.u8 => "C",
-			.f64 => "g",
-			.f32 => "f",
-			.f16 => "e",
-			.binary => |b| switch (b.is_utf8) {
-				true => if (b.is_large) "U" else "u",
-				false => if (b.is_large) "Z" else "z",
+			.Null => "n",
+			.Bool => "b",
+			.Int => |i| switch (i.bit_width) {
+				._8 => if (i.signed) "c" else "C",
+				._16 => if (i.signed) "s" else "S",
+				._32 => if (i.signed) "i" else "I",
+				._64 => if (i.signed) "l" else "L",
 			},
-			.list => "+l",
-			.list_fixed => |l| @ptrCast([*:0]const u8, (try std.fmt.allocPrint(allocator, "+w:{d}\x00", .{ l.fixed_len })).ptr),
-			.struct_ => "+s",
-			.union_ => |u| brk: {
-				const prefix = if (u.is_dense) "+ud:" else "+us:";
+			.Float => |f| switch (f.bit_width) {
+				._16 => "e",
+				._32 => "f",
+				._64 => "g",
+			},
+			.Date => |d| switch (d.unit) {
+				.day => "tdD",
+				.millisecond => "tdm",
+			},
+			.Time => |t| switch (t.unit) {
+				.second => "tts",
+				.millisecond => "ttm",
+				.microsecond => "ttu",
+				.nanosecond => "ttn",
+			},
+			.Timestamp => |ts| {
+				const prefix = switch (ts.unit) {
+					.second => "tss:",
+					.millisecond => "tsm:",
+					.microsecond => "tsu:",
+					.nanosecond => "tsn:",
+				};
+				var res = std.ArrayList(u8).init(allocator);
+				try res.writer().print("{s}", .{ prefix });
+				try res.writer().print("{s}", .{ ts.timezone });
+				try res.append(0);
+				return @ptrCast([*:0]const u8, res.items.ptr);
+			},
+			.Duration => |d| switch (d.unit) {
+				.second => "tDs",
+				.millisecond => "tDm",
+				.microsecond => "tDu",
+				.nanosecond => "tDn",
+			},
+			.Interval => |i| switch (i.unit) {
+				.year_month => "tiM",
+				.day_time => "tiD",
+				.month_day_nanosecond => "tin",
+			},
+			.Binary => |b| switch (b.utf8) {
+				true => if (b.large) "U" else "u",
+				false => if (b.large) "Z" else "z",
+			},
+			.FixedBinary => |b| {
+				const res = try std.fmt.allocPrint(allocator, "w:{d}\x00", .{ b.fixed_len });
+				return @ptrCast([*:0]const u8, res.ptr);
+			},
+			.List => "+l",
+			.FixedList => |l| {
+				const res = try std.fmt.allocPrint(allocator, "+w:{d}\x00", .{ l.fixed_len });
+				return @ptrCast([*:0]const u8, res.ptr);
+			},
+			.Struct => "+s",
+			.Union => |u| {
+				const prefix = if (u.dense) "+ud:" else "+us:";
 				var res = std.ArrayList(u8).init(allocator);
 				try res.writer().print("{s}", .{ prefix });
 				for (0..n_children) |i| {
@@ -190,41 +283,63 @@ pub const Tag = union(enum) {
 					}
 				}
 				try res.append(0);
-				break :brk @ptrCast([*:0]const u8, res.items.ptr);
+				return @ptrCast([*:0]const u8, res.items.ptr);
 			},
-			.dictionary => |d| switch (d.index) {
-				.i32 => "i",
-				.i16 => "s",
+			.Dictionary => |d| switch (d.index) {
 				.i8 => "c",
+				.i16 => "s",
+				.i32 => "i",
 			}
 		};
 	}
 
 	pub fn isAbiFormatOnHeap(self: Self) bool {
 		return switch (self) {
-			.list_fixed, .union_ => true,
+			.Timestamp, .FixedBinary, .FixedList, .Union => true,
 			else => false
 		};
 	}
 
-	pub fn isNullable(self: Self) bool {
+	pub fn nullable(self: Self) bool {
 		return switch (self) {
-			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, .struct_ => |opts| opts.is_nullable,
-			.list_fixed => |opts| opts.is_nullable,
-			.list => |opts| opts.is_nullable,
-			.union_ => |opts| opts.is_nullable,
-			else => false
+			.Null => false,
+			.Bool => |opts| opts.nullable,
+			.Int => |opts| opts.nullable,
+			.Float => |opts| opts.nullable,
+			.Date => |opts| opts.nullable,
+			.Time => |opts| opts.nullable,
+			.Timestamp => |opts| opts.nullable,
+			.Duration => |opts| opts.nullable,
+			.Interval => |opts| opts.nullable,
+			.Binary => true,
+			.FixedBinary => |opts| opts.nullable,
+			.List => |opts| opts.nullable,
+			.FixedList => |opts| opts.nullable,
+			.Struct => |opts| opts.nullable,
+			.Union => |opts| opts.nullable,
+			.Dictionary => true,
 		};
 	}
 
 	pub fn setNullable(self: *Self, is_nullable: bool) void {
-		switch (self.*) {
-			.bool, .i64, .i32, .i16, .i8, .u64, .u32, .u16, .u8, .f64, .f32, .f16, .struct_ => |*opts| opts.is_nullable = is_nullable,
-			.list_fixed => |*opts| opts.is_nullable = is_nullable,
-			.list => |*opts| opts.is_nullable = is_nullable,
-			.union_ => |*opts| opts.is_nullable = is_nullable,
-			else => std.debug.print("tried to set nullable on {any}\n", .{ self }),
-		}
+		return switch (self.*) {
+			.Null => std.debug.print("tried to set nullable on {any}\n", .{ self }),
+			.Bool => |*opts| opts.nullable = is_nullable,
+			.Int => |*opts| opts.nullable = is_nullable,
+			.Float => |*opts| opts.nullable = is_nullable,
+			.Date => |*opts| opts.nullable = is_nullable,
+			.Time => |*opts| opts.nullable = is_nullable,
+			.Timestamp => |*opts| opts.nullable = is_nullable,
+			.Duration => |*opts| opts.nullable = is_nullable,
+			.Interval => |*opts| opts.nullable = is_nullable,
+			.Binary => std.debug.print("tried to set nullable on {any}\n", .{ self }),
+			.FixedBinary => |*opts| opts.nullable = is_nullable,
+			.List => |*opts| opts.nullable = is_nullable,
+			.FixedList => |*opts| opts.nullable = is_nullable,
+			.Struct => |*opts| opts.nullable = is_nullable,
+			.Union => |*opts| opts.nullable = is_nullable,
+			.Dictionary => std.debug.print("tried to set nullable on {any}\n", .{ self }),
+		};
 	}
 };
 

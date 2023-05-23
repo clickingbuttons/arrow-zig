@@ -3,14 +3,14 @@ const builder = @import("./builder.zig");
 const BuilderAdvanced = @import("./list.zig").BuilderAdvanced;
 
 pub fn Builder(comptime Array: type) type {
-	const is_nullable = @typeInfo(Array) == .Optional;
-	const Child = if (is_nullable) @typeInfo(Array).Optional.child else Array;
+	const nullable = @typeInfo(Array) == .Optional;
+	const Child = if (nullable) @typeInfo(Array).Optional.child else Array;
 	const t = @typeInfo(Child);
 	if (t != .Array) {
 		@compileError(@typeName(Array) ++ " is not an array type");
 	}
 	const ChildBuilder = builder.Builder(t.Array.child);
-	return BuilderAdvanced(ChildBuilder, .{ .is_nullable = is_nullable, .is_large = false }, t.Array.len);
+	return BuilderAdvanced(ChildBuilder, .{ .nullable = nullable, .large = false }, t.Array.len);
 }
 
 const std = @import("std");

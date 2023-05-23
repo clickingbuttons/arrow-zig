@@ -188,7 +188,7 @@ pub const Array = struct {
 			.name = if (self.name.len == 0) null else try self.allocator.dupeZ(u8, self.name),
 			.metadata = null,
 			.flags = .{
-				.nullable = self.tag.isNullable(),
+				.nullable = self.tag.nullable(),
 			},
 			.n_children = @intCast(i64, n_children),
 			.children = try self.abiSchemaChildren(n_children),
@@ -199,7 +199,7 @@ pub const Array = struct {
 	}
 
 	pub fn toRecordBatch(self: *Self, name: []const u8) RecordBatchError!void {
-		if (self.tag != .struct_) {
+		if (self.tag != .Struct) {
 			return RecordBatchError.NotStruct;
 		}
 		// Record batches don't support nulls. It's ok to erase this because our struct impl saves null
@@ -207,7 +207,7 @@ pub const Array = struct {
 		// https://docs.rs/arrow-array/latest/arrow_array/array/struct.StructArray.html#comparison-with-recordbatch
 		self.name = name;
 		self.null_count = 0;
-		self.tag.struct_.is_nullable = false;
+		self.tag.Struct.nullable = false;
 		self.allocator.free(self.bufs[0]); // Free some memory.
 		self.bufs[0].len = 0; // Avoid double free.
 	}
@@ -263,7 +263,7 @@ fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool { return false
 fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {}
 
 pub const null_array = Array {
-	.tag = .null,
+	.tag = .Null,
 	.name = &.{},
 	.allocator = std.mem.Allocator {
 		.ptr = undefined,

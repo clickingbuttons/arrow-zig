@@ -27,12 +27,12 @@ fn MakeEnumType(comptime ChildrenBuilders: type) type {
  	});
 }
 
-fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) type {
+fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type {
 	const t = @typeInfo(ChildrenBuilders).Struct;
  	var fields: [t.fields.len]std.builtin.Type.UnionField = undefined;
  	for (t.fields, 0..) |f, i| {
 		const ChildBuilderType = f.type.Type();
-		if (is_nullable and @typeInfo(ChildBuilderType) != .Optional) {
+		if (nullable and @typeInfo(ChildBuilderType) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(ChildBuilderType) ++ "' is not nullable."
 				++ " ALL nullable structs MUST be nullable");
 		}
@@ -51,13 +51,13 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
  		},
  	});
 
-	return if (is_nullable) ?T else T;
+	return if (nullable) ?T else T;
 }
 
 pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.UnionOptions, comptime UnionType: type) type {
-	const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.is_nullable);
+	const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.nullable);
 	const TypeList = std.ArrayListAligned(TypeId, array.BufferAlignment);
-	const OffsetList = if (opts.is_dense) std.ArrayListAligned(i32, array.BufferAlignment) else void;
+	const OffsetList = if (opts.dense) std.ArrayListAligned(i32, array.BufferAlignment) else void;
 
 	return struct {
 		const Self = @This();
@@ -98,7 +98,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 				.Null => {
 					const num = 0;
 					try self.types.append(num);
-					if (opts.is_dense) {
+					if (opts.dense) {
 						const first_field = @typeInfo(ChildrenBuilders).Struct.fields[num];
 						var child_builder = &@field(self.children, first_field.name);
 
@@ -120,7 +120,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 				.Union => switch(value) {
 					inline else => |_, tag| {
 						try self.types.append(@enumToInt(tag));
-						if (opts.is_dense) {
+						if (opts.dense) {
 							var child_builder = &@field(self.children, @tagName(tag));
 
 							try self.offsets.append(@intCast(i32, child_builder.values.items.len));
@@ -149,7 +149,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 			}
 			var res = try array.Array.init(self.allocator);
 			res.* = .{
-				.tag = tags.Tag{ .union_ = opts },
+				.tag = tags.Tag{ .Union = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = self.types.items.len,
@@ -173,7 +173,7 @@ test "sparse union advanced" {
 		key: flat.Builder([]const u8),
 		val: flat.Builder(i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false, .is_dense = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = false, .dense = true }, void).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "asdf" });
@@ -186,7 +186,7 @@ test "nullable dense union advanced with finish" {
 		f: flat.Builder(?f32),
 		i: flat.Builder(?i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = true, .dense = true }, void).init(std.testing.allocator);
 
 	try b.append(.{ .f = 1.2 });
 	try b.append(null);
@@ -209,7 +209,7 @@ test "nullable union advanced with abi finish" {
 		f: flat.Builder(?f32),
 		i: flat.Builder(?i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = true, .dense = true }, void).init(std.testing.allocator);
 
 	try b.append(.{ .f = 1.2 });
 	try b.append(null);
@@ -243,7 +243,7 @@ test "nullable sparse union advanced with finish" {
 		f: flat.Builder(?f32),
 		s: flat.Builder(?[]const u8),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true, .is_dense = false }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = true, .dense = false }, void).init(std.testing.allocator);
 
 	try b.append(null);
 	try b.append(.{ .i = 5 });
@@ -263,11 +263,11 @@ test "nullable sparse union advanced with finish" {
 	try std.testing.expectEqualSlices(u8, &[_]u8{0, 0, 1, 2, 1, 0, 2 }, a.bufs[0]);
 }
 
-fn MakeChildrenBuilders(comptime Union: type, comptime is_nullable: bool) type {
+fn MakeChildrenBuilders(comptime Union: type, comptime nullable: bool) type {
 	const t = @typeInfo(Union).Union;
  	var fields: [t.fields.len]std.builtin.Type.StructField = undefined;
  	for (t.fields, 0..) |f, i| {
-		if (is_nullable and @typeInfo(f.type) != .Optional) {
+		if (nullable and @typeInfo(f.type) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(f.type) ++ "' is not nullable."
 				++ " ALL nullable union fields MUST be nullable");
 		}
@@ -290,15 +290,15 @@ fn MakeChildrenBuilders(comptime Union: type, comptime is_nullable: bool) type {
 }
 
 pub fn Builder(comptime Union: type) type {
-	const is_nullable = @typeInfo(Union) == .Optional;
-	const Child = if (is_nullable) @typeInfo(Union).Optional.child else Union;
+	const nullable = @typeInfo(Union) == .Optional;
+	const Child = if (nullable) @typeInfo(Union).Optional.child else Union;
 	const t = @typeInfo(Child);
 	if (t != .Union) {
 		@compileError(@typeName(Union) ++ " is not a union type");
 	}
-	const ChildrenBuilders = MakeChildrenBuilders(Child, is_nullable);
+	const ChildrenBuilders = MakeChildrenBuilders(Child, nullable);
 
-	return BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable, .is_dense = true }, Union);
+	return BuilderAdvanced(ChildrenBuilders, .{ .nullable = nullable, .dense = true }, Union);
 }
 
 test "init + deinit" {

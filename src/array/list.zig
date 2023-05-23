@@ -5,14 +5,14 @@ const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
 pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
-	const NullCount = if (opts.is_nullable) usize else void;
-	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
+	const NullCount = if (opts.nullable) usize else void;
+	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
 
-	const OffsetType = if (opts.is_large) i64 else i32;
+	const OffsetType = if (opts.large) i64 else i32;
 	const OffsetList = if (fixed_len == 0) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
 
 	const ChildAppendType = ChildBuilder.Type();
-	const AppendType = switch (opts.is_nullable) {
+	const AppendType = switch (opts.nullable) {
 		true => if (fixed_len > 0) ?[fixed_len]ChildAppendType else ?[]const ChildAppendType,
 		false => if (fixed_len > 0) [fixed_len]ChildAppendType else []const ChildAppendType,
 	};
@@ -106,11 +106,11 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
 			const tag = if (fixed_len == 0)
-					tags.Tag{ .list = opts }
-				else tags.Tag { .list_fixed = .{
-					.is_nullable = opts.is_nullable,
+					tags.Tag{ .List = opts }
+				else tags.Tag { .FixedList = .{
+					.nullable = opts.nullable,
 					.fixed_len = @intCast(i16, fixed_len),
-					.is_large = opts.is_large
+					.large = opts.large
 				} };
 
 			var res = try array.Array.init(allocator);
@@ -137,14 +137,14 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 }
 
 pub fn Builder(comptime Slice: type) type {
-	const is_nullable = @typeInfo(Slice) == .Optional;
-	const Child = if (is_nullable) @typeInfo(Slice).Optional.child else Slice;
+	const nullable = @typeInfo(Slice) == .Optional;
+	const Child = if (nullable) @typeInfo(Slice).Optional.child else Slice;
 	const t = @typeInfo(Child);
 	if (!(t == .Pointer and t.Pointer.size == .Slice)) {
 		@compileError(@typeName(Slice) ++ " is not a slice type");
 	}
 	const ChildBuilder = builder.Builder(t.Pointer.child);
-	return BuilderAdvanced(ChildBuilder, .{ .is_nullable = is_nullable, .is_large = false }, 0);
+	return BuilderAdvanced(ChildBuilder, .{ .nullable = nullable, .large = false }, 0);
 }
 
 test "init + deinit optional child and parent" {

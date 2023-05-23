@@ -48,7 +48,7 @@ pub const IpcError = error {
 
 fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
 	return .{
-		.dictionary = .{
+		.Dictionary = .{
 			.index = if (dict.indexType) |t| switch (t.bitWidth) {
 				8 => .i8,
 				16 => .i16,
@@ -67,88 +67,184 @@ fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
 
 fn toFieldTag(field: Field) !tags.Tag {
 	return switch(field.type) {
-		.Null => .null,
+		// .NONE: void,
+		.Null => .Null,
 		.Int => |maybe_i| {
 			if (maybe_i) |i| {
-				return switch (i.bitWidth) {
-					8 => switch (i.is_signed) {
-						 true => .{ .i8 = .{ .is_nullable = field.nullable } },
-						 false => .{ .u8 = .{ .is_nullable = field.nullable } },
-					},
-					16 => switch (i.is_signed) {
-						 true => .{ .i16 = .{ .is_nullable = field.nullable } },
-						 false => .{ .u16 = .{ .is_nullable = field.nullable } },
-					},
-					32 => switch (i.is_signed) {
-						 true => .{ .i32 = .{ .is_nullable = field.nullable } },
-						 false => .{ .u32 = .{ .is_nullable = field.nullable } },
-					},
-					64 => switch (i.is_signed) {
-						 true => .{ .i64 = .{ .is_nullable = field.nullable } },
-						 false => .{ .u64 = .{ .is_nullable = field.nullable } },
-					},
-					else => |w| {
-						log.warn("int field {s} invalid bit width {d}", .{ field.name, w });
-						return IpcError.InvalidBitWidth;
+				return .{
+					.Int = .{
+						.nullable = field.nullable,
+						.signed = i.is_signed,
+						.bit_width = switch (i.bitWidth) {
+							8 => ._8,
+							16 => ._16,
+							32 => ._32,
+							64 => ._64,
+							else => |w| {
+								log.warn("int field {s} invalid bit width {d}", .{ field.name, w });
+								return IpcError.InvalidBitWidth;
+							}
+						}
 					}
 				};
 			}
 			log.warn("int field {s} missing bit width", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
-		.FloatingPoint => |maybe_f| if (maybe_f) |f| switch (f.precision) {
-			.HALF => .{ .f16 = .{ .is_nullable = field.nullable } },
-			.SINGLE => .{ .f32 = .{ .is_nullable = field.nullable } },
-			.DOUBLE => .{ .f64 = .{ .is_nullable = field.nullable } },
-		} else {
+		.FloatingPoint => |maybe_f| {
+			if (maybe_f) |f| {
+				return .{
+					.Float = .{
+						.nullable = field.nullable,
+						.bit_width = switch (f.precision) {
+							.HALF => ._16,
+							.SINGLE => ._32,
+							.DOUBLE => ._64,
+						}
+					}
+				};
+			}
 			log.warn("float field {s} missing precision", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
-		.Binary => .{ .binary = .{ .is_large = false, .is_utf8 = false } },
-		.LargeBinary => .{ .binary = .{ .is_large = true, .is_utf8 = false } },
-		.Utf8 => .{ .binary = .{ .is_large = false, .is_utf8 = true } },
-		.LargeUtf8 => .{ .binary = .{ .is_large = true, .is_utf8 = true } },
-		.Bool => .{ .bool = .{ .is_nullable = field.nullable } },
+		.Binary => .{ .Binary = .{ .large = false, .utf8 = false } },
+		.LargeBinary => .{ .Binary = .{ .large = true, .utf8 = false } },
+		.Utf8 => .{ .Binary = .{ .large = false, .utf8 = true } },
+		.LargeUtf8 => .{ .Binary = .{ .large = true, .utf8 = true } },
+		.Bool => .{ .Bool = .{ .nullable = field.nullable } },
 		// .Decimal: ?*DecimalT,
-		// .Date: ?*DateT,
-		// .Time: ?*TimeT,
-		// .Timestamp: ?*TimestampT,
-		// .Interval: ?*IntervalT,
-		.List => .{ .list = .{ .is_nullable = field.nullable, .is_large = false } },
-		.LargeList => .{ .list = .{ .is_nullable = field.nullable, .is_large = true } },
-		.Struct_ => .{ .struct_ = .{ .is_nullable = field.nullable } },
-		.Union => |maybe_u| if (maybe_u) |u| switch (u.mode) {
-			.Sparse => .{ .union_ = .{ .is_nullable = field.nullable, .is_dense = false } },
-			.Dense => .{ .union_ = .{ .is_nullable = field.nullable, .is_dense = true } },
-		} else {
+		.Date => |maybe_d| {
+			if (maybe_d) |d| {
+				return .{
+					.Date = .{
+						.nullable = field.nullable,
+						.unit = switch (d.unit) {
+							.DAY => .day,
+							.MILLISECOND => .millisecond,
+						}
+					}
+				};
+			}
+			log.warn("date field {s} missing unit", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.Time => |maybe_t| {
+			if (maybe_t) |t| {
+				return .{
+					.Time = .{
+						.nullable = field.nullable,
+						.unit = switch (t.unit) {
+							.SECOND => .second,
+							.MILLISECOND => .millisecond,
+							.MICROSECOND => .microsecond,
+							.NANOSECOND => .nanosecond,
+						}
+					}
+				};
+			}
+			log.warn("time field {s} missing unit", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.Timestamp => |maybe_ts| {
+			if (maybe_ts) |ts| {
+				return .{
+					.Timestamp = .{
+						.nullable = field.nullable,
+						.unit = switch (ts.unit) {
+							.SECOND => .second,
+							.MILLISECOND => .millisecond,
+							.MICROSECOND => .microsecond,
+							.NANOSECOND => .nanosecond,
+						},
+						.timezone = ts.timezone,
+					}
+				};
+			}
+			log.warn("timestamp field {s} missing unit", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.Duration => |maybe_d| {
+			if (maybe_d) |d| {
+				return .{
+					.Duration = .{
+						.nullable = field.nullable,
+						.unit = switch (d.unit) {
+							.SECOND => .second,
+							.MILLISECOND => .millisecond,
+							.MICROSECOND => .microsecond,
+							.NANOSECOND => .nanosecond,
+						},
+					}
+				};
+			}
+			log.warn("duration field {s} missing unit", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.Interval => |maybe_i| {
+			if (maybe_i) |i| {
+				return .{
+					.Interval = .{
+						.nullable = field.nullable,
+						.unit = switch (i.unit) {
+							.YEAR_MONTH => .year_month,
+							.DAY_TIME => .day_time,
+							.MONTH_DAY_NANO => .month_day_nanosecond,
+						},
+					}
+				};
+			}
+			log.warn("timestamp field {s} missing unit", .{ field.name });
+			return IpcError.InvalidFieldTag;
+		},
+		.List => .{ .List = .{ .nullable = field.nullable, .large = false } },
+		.LargeList => .{ .List = .{ .nullable = field.nullable, .large = true } },
+		.Struct_ => .{ .Struct = .{ .nullable = field.nullable } },
+		.Union => |maybe_u| {
+			if (maybe_u) |u| {
+				return .{
+					.Union = .{
+						.nullable = field.nullable,
+						.dense = switch (u.mode) {
+							.Dense => true,
+							.Sparse => false,
+						}
+					}
+				};
+			}
 			log.warn("union field {s} missing mode", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
-		.FixedSizeBinary => |maybe_b| if (maybe_b) |b| .{
-			.list_fixed = .{
-				.is_nullable = field.nullable,
-				.fixed_len = @intCast(i16, b.byteWidth),
-				.is_large = false,
+		.FixedSizeBinary => |maybe_b| {
+			if (maybe_b) |b| {
+				return .{
+					.FixedBinary = .{
+						.nullable = field.nullable,
+						.fixed_len = b.byteWidth,
+					}
+				};
 			}
-		} else {
 			log.warn("fixed size binary field {s} missing byte width", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
-		.FixedSizeList => |maybe_f| if (maybe_f) |f| .{
-			.list_fixed = .{
-				.is_nullable = field.nullable,
-				.fixed_len = @intCast(i16, f.listSize),
-				.is_large = false,
+		.FixedSizeList => |maybe_f| {
+			if (maybe_f) |f| {
+				return .{
+					.FixedList = .{
+						.nullable = field.nullable,
+						.fixed_len = f.listSize,
+						.large = false,
+					}
+				};
 			}
-		} else {
 			log.warn("fixed size list field {s} missing fixed length", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
 		// .Map: ?*MapT,
-		// .Duration: ?*DurationT,
-		// .NONE: void,
 		// .RunEndEncoded: ?*RunEndEncodedT,
-		else => .null,
+		else => |t| {
+			log.warn("field {s} unknown type {any}", .{ field.name, t });
+			return IpcError.InvalidFieldTag;
+		}
 	};
 }
 
@@ -318,6 +414,7 @@ const RecordBatchReader = struct {
 
 	fn readBuffers(self: *Self, allocator: std.mem.Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
 		var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
+		errdefer allocator.free(buffers);
 		for (batch.buffers.items, 0..) |info, i| {
 			buffers[i] = try allocator.alignedAlloc(u8, BufferAlignment, @intCast(usize, info.length));
 			const n_read = try self.source.read(buffers[i]);
@@ -342,11 +439,13 @@ const RecordBatchReader = struct {
 		field: Field
 	) !*Array {
 		const allocator = self.allocator;
-		log.debug("read field \"{s}\" n_children {d}", .{ field.name, field.children.items.len });
+		const tag = try toTag(field);
+		log.debug("read field \"{s}\" type {any} n_children {d}",
+			.{ field.name, tag, field.children.items.len });
 
 		var res = try allocator.create(Array);
 		res.* = .{
-			.tag = try toTag(field),
+			.tag = tag,
 			.name = field.name,
 			.allocator = allocator,
 			.length = @intCast(usize, nodes[self.node_index].length),
@@ -405,10 +504,12 @@ const RecordBatchReader = struct {
 		if (batch.buffers.items.len != self.n_buffers) {
 			log.warn("skipped batch with {d} buffers (schema expects {d})",
 				.{ batch.buffers.items.len, self.n_buffers });
+			return IpcError.InvalidLen;
 		}
 		if (batch.nodes.items.len != self.n_fields) {
 			log.warn("skipped batch with {d} fields (schema expects {d})",
 				.{ batch.nodes.items.len, self.n_fields });
+			return IpcError.InvalidLen;
 		}
 
 		// Read flattened buffers
@@ -425,7 +526,7 @@ const RecordBatchReader = struct {
 
 		const res = try allocator.create(Array);
 		res.* = .{
-			.tag = .{ .struct_ = .{ .is_nullable = false } },
+			.tag = .{ .Struct = .{ .nullable = false } },
 			.name = "record batch",
 			.allocator = allocator,
 			.length = @intCast(usize, batch.length),
@@ -557,6 +658,20 @@ test "example file path" {
 	while (try ipc_reader.next()) |rb| {
 		defer rb.deinit();
 		try testEquals(expected, rb);
+		n_batches += 1;
+	}
+	try std.testing.expectEqual(@as(usize, 1), n_batches);
+}
+
+test "tickers file" {
+	std.testing.log_level = .debug;
+	var ipc_reader = try RecordBatchReader.initFilePath(std.testing.allocator, "./tickers.arrow");
+	defer ipc_reader.deinit();
+	try std.testing.expectEqual(@as(usize, 22), ipc_reader.schema.fields.items.len);
+
+	var n_batches: usize = 0;
+	while (try ipc_reader.next()) |rb| {
+		defer rb.deinit();
 		n_batches += 1;
 	}
 	try std.testing.expectEqual(@as(usize, 1), n_batches);

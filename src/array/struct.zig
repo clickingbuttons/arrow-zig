@@ -4,12 +4,12 @@ const tags = @import("../tags.zig");
 const array = @import("./array.zig");
 const flat = @import("./flat.zig");
 
-fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) type {
+fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type {
 	const t = @typeInfo(ChildrenBuilders).Struct;
  	var fields: [t.fields.len]std.builtin.Type.StructField = undefined;
  	for (t.fields, 0..) |f, i| {
 		const ChildBuilderType = f.type.Type();
-		if (is_nullable and @typeInfo(ChildBuilderType) != .Optional) {
+		if (nullable and @typeInfo(ChildBuilderType) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(ChildBuilderType) ++ "' is not nullable."
 				++ " ALL nullable structs MUST be nullable");
 		}
@@ -30,15 +30,15 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime is_nullable: bool) t
  		},
  	});
 
-	return if (is_nullable) ?T else T;
+	return if (nullable) ?T else T;
 }
 
 // ChildrenBuilders is a struct of { field_name: builder_type }
-pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.PrimitiveOptions, comptime StructType: type) type {
-	const NullCount = if (opts.is_nullable) usize else void;
-	const ValidityList = if (opts.is_nullable) std.bit_set.DynamicBitSet else void;
+pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.NullableOptions, comptime StructType: type) type {
+	const NullCount = if (opts.nullable) usize else void;
+	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
 
-	const AppendType = if (StructType != void) StructType else MakeAppendType(ChildrenBuilders, opts.is_nullable);
+	const AppendType = if (StructType != void) StructType else MakeAppendType(ChildrenBuilders, opts.nullable);
 
 	return struct {
 		const Self = @This();
@@ -112,7 +112,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Prim
 			}
 			var res = try array.Array.init(self.allocator);
 			res.* = .{
-				.tag = tags.Tag{ .struct_ = opts },
+				.tag = tags.Tag{ .Struct = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = children[0].length,
@@ -136,7 +136,7 @@ test "struct advanced" {
 		key: flat.Builder([]const u8),
 		val: flat.Builder(i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = false }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = false }, void).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(.{ .key = "asdf", .val = 1 });
@@ -148,7 +148,7 @@ test "nullable struct advanced with finish" {
 		key: flat.Builder(?[]const u8),
 		val: flat.Builder(?i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = true }, void).init(std.testing.allocator);
+	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = true }, void).init(std.testing.allocator);
 
 	try b.append(null);
 	try b.append(.{ .key = "asdf", .val = 1 });
@@ -159,11 +159,11 @@ test "nullable struct advanced with finish" {
 	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
 }
 
-fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type {
+fn MakeChildrenBuilders(comptime Struct: type, comptime nullable: bool) type {
 	const t = @typeInfo(Struct).Struct;
  	var fields: [t.fields.len]std.builtin.Type.StructField = undefined;
  	for (t.fields, 0..) |f, i| {
-		if (is_nullable and @typeInfo(f.type) != .Optional) {
+		if (nullable and @typeInfo(f.type) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(f.type) ++ "' is not nullable."
 				++ " ALL nullable struct fields MUST be nullable");
 		}
@@ -186,15 +186,15 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime is_nullable: bool) type 
 }
 
 pub fn Builder(comptime Struct: type) type {
-	const is_nullable = @typeInfo(Struct) == .Optional;
-	const Child = if (is_nullable) @typeInfo(Struct).Optional.child else Struct;
+	const nullable = @typeInfo(Struct) == .Optional;
+	const Child = if (nullable) @typeInfo(Struct).Optional.child else Struct;
 	const t = @typeInfo(Child);
 	if (t != .Struct) {
 		@compileError(@typeName(Struct) ++ " is not a struct type");
 	}
-	const ChildrenBuilders = MakeChildrenBuilders(Child, is_nullable);
+	const ChildrenBuilders = MakeChildrenBuilders(Child, nullable);
 
-	return BuilderAdvanced(ChildrenBuilders, .{ .is_nullable = is_nullable }, Struct);
+	return BuilderAdvanced(ChildrenBuilders, .{ .nullable = nullable }, Struct);
 }
 
 test "init + deinit" {

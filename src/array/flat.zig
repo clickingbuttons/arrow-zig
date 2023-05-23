@@ -15,7 +15,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 	const ValidityList = if (@typeInfo(T) == .Optional) std.bit_set.DynamicBitSet else void;
 	const ValueType = tag.Primitive();
 
-	const OffsetType = if (opts.is_large) i64 else i32;
+	const OffsetType = if (opts.large) i64 else i32;
 	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
 	const ValueList = std.ArrayListAligned(ValueType, array.BufferAlignment);
 
@@ -131,7 +131,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 }
 
 pub fn Builder(comptime T: type) type {
-	return BuilderAdvanced(T, .{ .is_large = false, .is_utf8 = false });
+	return BuilderAdvanced(T, .{ .large = false, .utf8 = false });
 }
 
 test "primitive init + deinit" {
@@ -180,7 +180,7 @@ test "varbinary init + deinit" {
 }
 
 test "varbinary utf8" {
-	var b = try BuilderAdvanced([]const u8, .{ .is_large = true, .is_utf8 = true }).init(std.testing.allocator);
+	var b = try BuilderAdvanced([]const u8, .{ .large = true, .utf8 = true }).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(&[_]u8{1,2,3});

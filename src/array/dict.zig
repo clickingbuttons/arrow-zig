@@ -69,7 +69,7 @@ pub fn BuilderAdvanced(
 			self.hashmap.deinit();
 			var res = try array.Array.init(allocator);
 			res.* = .{
-				.tag = tags.Tag{ .dictionary = opts },
+				.tag = tags.Tag{ .Dictionary = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
 				.length = self.indices.items.len,

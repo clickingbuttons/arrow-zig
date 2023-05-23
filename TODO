@@ -32,6 +32,7 @@
 		- [x] owned memory
 		- [ ] compression
 		- [ ] file dictionaries in wrong order
+		- [ ] test const + mutable buffer
 	- [ ] write
 
 ## correctness
@@ -42,3 +43,6 @@
 - [ ] more dict types
 - [ ] datetime types
 - [ ] decimal types
+	- wait for https://github.com/ziglang/zig/issues/15678
+- [ ] map type
+- [ ] fixed width binary type
