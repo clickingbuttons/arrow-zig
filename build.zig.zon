@@ -7,5 +7,9 @@
 			.url = "https://github.com/travisstaloch/flatbufferz/archive/5c4c85b9eff1b8d070a0a84171e7cc3a8d14e2a9.tar.gz",
 			.hash = "1220b27046f2f95868e91c1d12740626ca580e33aed2dce17c212aec8e0124ead9c9"
 		},
+		.lz4 = .{
+			.url = "https://github.com/clickingbuttons/lz4/archive/refs/heads/master.tar.gz",
+			.hash = "1220ba841473bb16970a3c8ed4f450d2b67c3d4f59778bae37162c49da74520d5c53",
+		},
 	}
 }

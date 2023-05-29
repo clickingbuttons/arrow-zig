@@ -28,6 +28,13 @@ pub fn build(b: *std.Build) void {
 	// flatc_run.step.dependOn(b.getInstallStep());
 	// if (b.args) |args| flatc_run.addArgs(args);
 
+	const lz4 = b.dependency("lz4", .{
+		.target = target,
+		.optimize = optimize,
+	});
+	const lz4_mod = lz4.module("lz4");
+	lib.linkLibrary(lz4.artifact("lz4"));
+	lib.addModule("lz4", lz4_mod);
 
 	const main_tests = b.addTest(.{
 		.root_source_file = .{ .path = "src/lib.zig" },
@@ -35,6 +42,7 @@ pub fn build(b: *std.Build) void {
 		.optimize = optimize,
 	});
 	main_tests.addModule("flatbufferz", flatbufferz_mod); // For generated files to use lib
+	main_tests.addModule("lz4", lz4_mod);
 	const run_main_tests = b.addRunArtifact(main_tests);
 	const test_step = b.step("test", "Run library tests");
 	test_step.dependOn(&run_main_tests.step);

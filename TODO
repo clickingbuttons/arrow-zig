@@ -31,9 +31,12 @@
 		- [x] error messages
 		- [x] owned memory
 		- [ ] compression
+			- [x] zstd
+			- [x] lz4
 		- [ ] file dictionaries in wrong order
-		- [ ] test const + mutable buffer
+		- [x] true stream
 	- [ ] write
+		- [ ] compression
 
 ## correctness
 - [x] read all buffers for all tests
@@ -41,8 +44,9 @@
 
 ## impl
 - [ ] more dict types
-- [ ] datetime types
+- [x] datetime types
 - [ ] decimal types
 	- wait for https://github.com/ziglang/zig/issues/15678
 - [ ] map type
-- [ ] fixed width binary type
+- [x] fixed width binary type
+	- [ ] add flat builder support

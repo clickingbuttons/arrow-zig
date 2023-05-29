@@ -1,10 +1,12 @@
 const std = @import("std");
+const lz4 = @import("lz4");
 const Footer = @import("./gen/Footer.fb.zig").Footer;
 const Message = @import("./gen/Message.fb.zig").Message;
 const schema_mod = @import("./gen/Schema.fb.zig");
 const record_batch = @import("./gen/RecordBatch.fb.zig");
 const dictionary_batch = @import("./gen/DictionaryBatch.fb.zig");
 const DictionaryEncoding = @import("./gen/DictionaryEncoding.fb.zig").DictionaryEncodingT;
+const BodyCompression = @import("./gen/BodyCompression.fb.zig").BodyCompressionT;
 const array_mod = @import("../array/array.zig");
 const field_mod = @import("./gen/Field.fb.zig");
 const FieldNode = @import("./gen/FieldNode.fb.zig").FieldNodeT;
@@ -287,340 +289,413 @@ fn nBuffers(schema: Schema) !usize {
 	return res;
 }
 
-const RecordBatchReader = struct {
-	const Dictionaries = std.AutoHashMap(i64, struct {
-		length: usize,
-		null_count: usize,
-		buf0: std.ArrayList(u8),
-		buf1: std.ArrayList(u8),
+/// Reads an IPC stream.
+pub fn RecordBatchReader(comptime reader: type) type {
+	return struct {
+		const Dictionaries = std.AutoHashMap(i64, struct {
+			length: usize,
+			null_count: usize,
+			buf0: std.ArrayList(u8),
+			buf1: std.ArrayList(u8),
 
-		pub fn deinit(self: @This()) void {
-			self.buf0.deinit();
-			self.buf1.deinit();
+			pub fn deinit(self: @This()) void {
+				self.buf0.deinit();
+				self.buf1.deinit();
+			}
+		});
+		const Source = std.io.BufferedReader(4096, reader); 
+
+		allocator: std.mem.Allocator,
+		arena: std.heap.ArenaAllocator,
+		source: Source,
+		schema: Schema,
+		n_fields: usize,
+		n_buffers: usize,
+
+		node_index: usize = 0,
+		buffer_index: usize = 0,
+		dictionaries: Dictionaries,
+
+		const Self = @This();
+
+		pub fn init(allocator: std.mem.Allocator, source: Source) !Self {
+			var res = Self {
+				.allocator = allocator,
+				.arena = std.heap.ArenaAllocator.init(allocator),
+				.source = source,
+				.schema = undefined,
+				.n_fields = undefined,
+				.n_buffers = undefined,
+				.dictionaries = Dictionaries.init(allocator),
+			};
+			res.schema = try res.readSchema();
+			res.n_fields = nFields(res.schema);
+			res.n_buffers = try nBuffers(res.schema);
+			return res;
 		}
-	});
 
-	allocator: std.mem.Allocator,
-	arena: std.heap.ArenaAllocator,
+		pub fn deinit(self: *Self) void {
+			var iter = self.dictionaries.valueIterator();
+			while (iter.next()) |d| {
+				d.deinit();
+			}
+			self.dictionaries.deinit();
+			self.arena.deinit();
+		}
+
+		fn readMessageLen(self: *Self) !usize {
+			// > This component was introduced in version 0.15.0 in part to address the 8-byte alignment
+			// > requirement of Flatbuffers.
+			var res = try self.source.reader().readIntLittle(MessageLen);
+			if (res == continuation) {
+				return self.readMessageLen();
+			}
+
+			return @intCast(usize, res);
+		}
+
+		fn readMessage(self: *Self) !?Message {
+			// <continuation: 0xFFFFFFFF> (optional)
+			// <metadata_size: int32>
+			// <metadata_flatbuffer: bytes>
+			// <padding to 8 byte boundary>
+			// <message body>
+			const message_len = try self.readMessageLen();
+			if (message_len == 0) return null; // EOS
+
+			var message_buf = try self.arena.allocator().alloc(u8, message_len);
+			const n_read = try self.source.reader().read(message_buf);
+			if (n_read != message_buf.len) {
+				return IpcError.InvalidLen;
+			}
+			// Have not yet experienced need for padding.
+			std.debug.assert(n_read % 8 == 0);
+			return Message.GetRootAs(message_buf, 0);
+		}
+
+		fn readMessageBody(self: *Self, size: i64) ![]u8 {
+			const real_size = @intCast(usize, size);
+			const res = try self.arena.allocator().alignedAlloc(u8, abi.BufferAlignment, real_size);
+			const n_read = try self.source.reader().read(res);
+			if (n_read != res.len) {
+				log.err("record batch ended early", .{});
+				return IpcError.InvalidRecordBatch;
+			}
+
+			return res;
+		}
+
+		fn readSchema(self: *Self) !Schema {
+			if (try self.readMessage()) |message| {
+				if (message.HeaderType() != .Schema) {
+					log.err("expected initial schema message, got {any}", .{ message.HeaderType() });
+					return IpcError.InvalidSchemaMesssage;
+				}
+				if (message.Header()) |header| {
+					const allocator = self.arena.allocator();
+					return schema_mod.Schema.init(header.bytes, header.pos).Unpack(.{ .allocator = allocator });
+				} else {
+					return IpcError.InvalidSchemaMesssage;
+				}
+			}
+
+			return IpcError.MissingSchemaMessage;
+		}
+
+		fn readField(
+			self: *Self,
+			buffers: []BufferT,
+			nodes: []FieldNode,
+			field: Field
+		) !*Array {
+			const allocator = self.allocator;
+			const tag = try toTag(field);
+			log.debug("read field \"{s}\" type {any} n_children {d}",
+				.{ field.name, tag, field.children.items.len });
+
+			var res = try allocator.create(Array);
+			res.* = .{
+				.tag = tag,
+				.name = field.name,
+				.allocator = allocator,
+				.length = @intCast(usize, nodes[self.node_index].length),
+				.null_count = @intCast(usize, nodes[self.node_index].null_count),
+				.bufs = .{ &.{}, &.{}, &.{} },
+				.children = try allocator.alloc(*Array, field.children.items.len),
+			};
+			self.node_index += 1;
+
+			for (0..res.tag.abiLayout().nBuffers()) |i| {
+				res.bufs[i] = buffers[self.buffer_index];
+				self.buffer_index += 1;
+			}
+
+			for (field.children.items, 0..) |field_c, i| {
+				res.children[i] = try self.readField(buffers, nodes, field_c);
+			}
+			if (field.dictionary) |d| {
+				log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
+				if (self.dictionaries.get(d.id)) |v| {
+					// Copy out dictionary. Yes, this sucks for performance. Thank the shitty spec :)
+					var dict_values = try allocator.create(Array);
+					dict_values.* = .{
+						.tag = try toFieldTag(field),
+						.name = "dict values",
+						.allocator = allocator,
+						.length = v.length,
+						.null_count = v.null_count,
+						.bufs = .{
+							try allocator.alignedAlloc(u8, BufferAlignment, v.buf0.items.len),
+							try allocator.alignedAlloc(u8, BufferAlignment, v.buf1.items.len),
+							&.{}
+						},
+						.children = &.{},
+					};
+					@memcpy(dict_values.bufs[0], v.buf0.items);
+					@memcpy(dict_values.bufs[1], v.buf1.items);
+					res.children = try allocator.alloc(*Array, 1);
+					res.children[0] = dict_values;
+				} else {
+					return IpcError.DictNotFound;
+				}
+			}
+			return res;
+		}
+
+		fn readBuffer(self: *Self, allocator: std.mem.Allocator, size: usize, compression: ?*BodyCompression) !BufferT {
+			// Undocumented, but whatever :)
+			if (size == 0) {
+				return try allocator.alignedAlloc(u8, BufferAlignment, 0);
+			}
+			// > Each constituent buffer is first compressed with the indicated
+			// > compressor, and then written with the uncompressed length in the first 8
+			// > bytes as a 64-bit little-endian signed integer followed by the compressed
+			// > buffer bytes (and then padding as required by the protocol). The
+			// > uncompressed length may be set to -1 to indicate that the data that
+			// > follows is not compressed, which can be useful for cases where
+			// > compression does not yield appreciable savings.
+			const uncompressed_size = if (compression != null) brk: {
+					const res = try self.source.reader().readIntLittle(i64);
+					break :brk if (res == -1) size else @intCast(usize, res);
+				} else size;
+			std.debug.print("compressed {d} uncompressed {d}\n", .{ size, uncompressed_size });
+			var res = try allocator.alignedAlloc(u8, BufferAlignment, uncompressed_size);
+			var n_read: ?usize = null;
+
+			if (compression) |c| {
+				switch (c.codec) {
+					.LZ4_FRAME => {
+						var stream = lz4.decompressStream(self.arena.allocator(), self.source.reader());
+						defer stream.deinit();
+						n_read = try stream.read(res);
+					},
+					.ZSTD => {
+						var stream = std.compress.zstd.decompressStream(self.arena.allocator(), self.source.reader());
+						defer stream.deinit();
+						n_read = try stream.read(res);
+					},
+				}
+			} else {
+				n_read = try self.source.reader().read(res);
+			}
+
+			if (res.len != n_read) {
+				log.err("expected {d} bytes in record batch body, got {any}", .{ res.len, n_read });
+				return IpcError.InvalidRecordBatch;
+			}
+			return res;
+		}
+
+		fn readBuffers(self: *Self, allocator: std.mem.Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
+			var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
+			errdefer allocator.free(buffers);
+
+			for (batch.buffers.items, 0..) |info, i| {
+				const size = @intCast(usize, info.length);
+				buffers[i] = try self.readBuffer(allocator, size, batch.compression);
+
+				const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
+				const seek = next_offset - (info.offset + info.length);
+				try self.source.reader().skipBytes(@intCast(u64, seek), .{});
+			}
+
+			return buffers;
+		}
+
+		/// Caller owns Array.
+		fn readBatch(self: *Self, batch: RecordBatch, body_len: i64) !*Array {
+			// https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
+			// > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
+			// > record batch.
+			log.debug("read batch len {d} compression {any}", .{ batch.length, batch.compression });
+			const allocator = self.allocator;
+
+			// Quickly check that the number of buffers and field nodes matches the schema.
+			if (batch.buffers.items.len != self.n_buffers) {
+				log.warn("skipped batch with {d} buffers (schema expects {d})",
+					.{ batch.buffers.items.len, self.n_buffers });
+				return IpcError.InvalidLen;
+			}
+			if (batch.nodes.items.len != self.n_fields) {
+				log.warn("skipped batch with {d} fields (schema expects {d})",
+					.{ batch.nodes.items.len, self.n_fields });
+				return IpcError.InvalidLen;
+			}
+
+			// Read flattened buffers
+			const buffers = try self.readBuffers(allocator, batch, body_len);
+			defer allocator.free(buffers);
+
+			// Recursively read tags, name, and buffers into arrays from `schema.fields`
+			self.node_index = 0;
+			self.buffer_index = 0;
+			var children = try allocator.alloc(*Array, self.schema.fields.items.len);
+			for (self.schema.fields.items, 0..) |f, i| {
+				children[i] = try self.readField(buffers, batch.nodes.items, f);
+			}
+
+			const res = try allocator.create(Array);
+			res.* = .{
+				.tag = .{ .Struct = .{ .nullable = false } },
+				.name = "record batch",
+				.allocator = allocator,
+				.length = @intCast(usize, batch.length),
+				.null_count = 0,
+				.bufs = .{ &.{}, &.{}, &.{} },
+				.children = children,
+			};
+			return res;
+		}
+
+		/// Reader owns dict.
+		fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
+			// We own the dictionaries due to any message being able to update them. The values are copied
+			// out into arrays.
+			// A maybe better alternative is adding reference counting support to Array. However, that will
+			// result in previous record batches referencing that dictionary being mutated which I'd argue
+			// is unexpected behavior.
+			const allocator = self.arena.allocator();
+
+			log.debug("read_dict {d}", .{dict.id});
+			const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
+			const n_expected = comptime abi.Array.Layout.Dictionary.nBuffers();
+			std.debug.assert(n_expected == 2);
+			const n_actual = batch.buffers.items.len;
+			if (n_expected != n_actual) {
+				log.warn("expected dictionary data to have {d} buffers, got {d}", .{ n_expected, n_actual });
+				return IpcError.InvalidNumDictionaryBuffers;
+			}
+			const node = batch.nodes.items[0];
+			const buffers = try self.readBuffers(allocator, batch, body_len);
+			defer allocator.free(buffers);
+
+			if (dict.isDelta) {
+				if (self.dictionaries.getPtr(dict.id)) |existing| {
+					try existing.buf0.appendSlice(buffers[0]);
+					try existing.buf1.appendSlice(buffers[1]);
+				} else {
+					log.warn("ignoring delta for non-existant dictionary {d}", .{ dict.id });
+				}
+			} else {
+				var buf0 = std.ArrayList(u8).init(allocator);
+				var buf1 = std.ArrayList(u8).init(allocator);
+				try buf0.appendSlice(buffers[0]);
+				try buf1.appendSlice(buffers[1]);
+
+				if (try self.dictionaries.fetchPut(dict.id, .{
+						.length = @intCast(usize, node.length),
+						.null_count = @intCast(usize, node.null_count),
+						.buf0 = buf0,
+						.buf1 = buf1,
+					})) |existing| {
+					log.warn("spec does not support replacing dictionary for dictionary {d}", .{ dict.id });
+					existing.value.deinit();
+				}
+			}
+		}
+
+		/// Caller owns Array.
+		pub fn next(self: *Self) !?*Array {
+			const allocator = self.arena.allocator();
+			if (try self.readMessage()) |message| {
+				self.node_index = 0;
+				self.buffer_index = 0;
+				switch (message.HeaderType()) {
+					.NONE, .Schema => {
+						log.warn("ignoring unexpected message {any}", .{ message.HeaderType() });
+						try self.source.reader().skipBytes(@intCast(u64, message.BodyLength()), .{});
+					},
+					.DictionaryBatch => {
+						if (message.Header()) |header| {
+							const dict = try dictionary_batch.DictionaryBatch
+								.init(header.bytes, header.pos)
+								.Unpack(.{ .allocator = allocator });
+							try self.readDict(dict, message.BodyLength());
+
+							// Keep going until a record batch
+							return self.next();
+						}
+						return IpcError.InvalidDictionaryBatchHeader;
+					},
+					.RecordBatch => {
+						if (message.Header()) |header| {
+							const record = try record_batch.RecordBatch
+								.init(header.bytes, header.pos)
+								.Unpack(.{ .allocator = allocator });
+							return try self.readBatch(record, message.BodyLength());
+						}
+						return IpcError.InvalidRecordBatchHeader;
+					}
+				}
+			}
+			return null;
+		}
+	};
+}
+
+pub fn recordBatchReader(allocator: std.mem.Allocator, reader: anytype) !RecordBatchReader(@TypeOf(reader)) {
+	return RecordBatchReader(@TypeOf(reader)).init(allocator, std.io.bufferedReader(reader));
+}
+
+/// Reads a buffer.
+const RecordBatchSeekReader = struct {
+	const Reader = RecordBatchReader(std.io.StreamSource.Reader);
+
 	source: std.io.StreamSource,
-	schema: Schema,
-	n_fields: usize,
-	n_buffers: usize,
-	owns_file: bool = false,
-
-	node_index: usize = 0,
-	buffer_index: usize = 0,
-	dictionaries: Dictionaries,
+	reader: Reader,
 
 	const Self = @This();
 
 	pub fn init(allocator: std.mem.Allocator, source: std.io.StreamSource) !Self {
-		var res = Self {
-			.allocator = allocator,
-			.arena = std.heap.ArenaAllocator.init(allocator),
+		return .{
 			.source = source,
-			.schema = undefined,
-			.n_fields = undefined,
-			.n_buffers = undefined,
-			.dictionaries = Dictionaries.init(allocator),
+			.reader = try Reader.init(allocator, std.io.bufferedReader(@constCast(&source).reader())),
 		};
-		res.schema = try res.readSchema();
-		res.n_fields = nFields(res.schema);
-		res.n_buffers = try nBuffers(res.schema);
-		return res;
 	}
 
-	pub fn initFile(allocator: std.mem.Allocator, file: std.fs.File, take_ownership: bool) !Self {
-		var source = std.io.StreamSource{ .file = file };
-		try source.seekTo(8);
-		var res = try init(allocator, source);
-		res.owns_file = take_ownership;
-		return res;
-	}
-
-	pub fn initFilePath(allocator: std.mem.Allocator, path: []const u8) !Self {
-		var file = try std.fs.cwd().openFile(path, .{});
-		return initFile(allocator, file, true);
+	pub fn initFile(allocator: std.mem.Allocator, fname: []const u8) !Self {
+		const file = try std.fs.cwd().openFile(fname, .{});
+		// TODO: peek
+		try file.seekBy(8);
+		return init(allocator, std.io.StreamSource { .file = file });
 	}
 
 	pub fn deinit(self: *Self) void {
-		if (self.owns_file) self.source.file.close();
-		var iter = self.dictionaries.valueIterator();
-		while (iter.next()) |d| {
-			d.deinit();
-		}
-		self.dictionaries.deinit();
-		self.arena.deinit();
-	}
-
-	fn readMessageLen(self: *Self) !usize {
-		// > This component was introduced in version 0.15.0 in part to address the 8-byte alignment
-		// > requirement of Flatbuffers.
-		var res = try self.source.reader().readIntLittle(MessageLen);
-		if (res == continuation) {
-			return self.readMessageLen();
-		}
-
-		return @intCast(usize, res);
-	}
-
-	fn readMessage(self: *Self) !?Message {
-		// <continuation: 0xFFFFFFFF> (optional)
-		// <metadata_size: int32>
-		// <metadata_flatbuffer: bytes>
-		// <padding to 8 byte boundary>
-		// <message body>
-		const message_len = try self.readMessageLen();
-		if (message_len == 0) return null; // EOS
-
-		var message_buf = try self.arena.allocator().alloc(u8, message_len);
-		const n_read = try self.source.reader().read(message_buf);
-		if (n_read != message_buf.len) {
-			return IpcError.InvalidLen;
-		}
-		// Have not yet experienced need for padding.
-		std.debug.assert(n_read % 8 == 0);
-		return Message.GetRootAs(message_buf, 0);
-	}
-
-	fn readMessageBody(self: *Self, size: i64) ![]u8 {
-		const real_size = @intCast(usize, size);
-		const res = try self.arena.allocator().alignedAlloc(u8, abi.BufferAlignment, real_size);
-		const n_read = try self.source.reader().read(res);
-		if (n_read != res.len) {
-			log.err("record batch ended early", .{});
-			return IpcError.InvalidRecordBatch;
-		}
-
-		return res;
-	}
-
-	fn readSchema(self: *Self) !Schema {
-		if (try self.readMessage()) |message| {
-			if (message.HeaderType() != .Schema) {
-				log.err("expected initial schema message, got {any}", .{ message.HeaderType() });
-				return IpcError.InvalidSchemaMesssage;
-			}
-			if (message.Header()) |header| {
-				const allocator = self.arena.allocator();
-				return schema_mod.Schema.init(header.bytes, header.pos).Unpack(.{ .allocator = allocator });
-			} else {
-				return IpcError.InvalidSchemaMesssage;
-			}
-		}
-
-		return IpcError.MissingSchemaMessage;
-	}
-
-	fn readBuffers(self: *Self, allocator: std.mem.Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
-		var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
-		errdefer allocator.free(buffers);
-		for (batch.buffers.items, 0..) |info, i| {
-			buffers[i] = try allocator.alignedAlloc(u8, BufferAlignment, @intCast(usize, info.length));
-			const n_read = try self.source.read(buffers[i]);
-			if (buffers[i].len != n_read) {
-				log.err("expected {d} bytes in record batch body, got {d}",
-					.{ buffers[i].len, n_read });
-				return IpcError.InvalidRecordBatch;
-			}
-
-			const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
-			const seek = next_offset - (info.offset + info.length);
-			try self.source.seekBy(seek);
-		}
-
-		return buffers;
-	}
-
-	fn readField(
-		self: *Self,
-		buffers: []BufferT,
-		nodes: []FieldNode,
-		field: Field
-	) !*Array {
-		const allocator = self.allocator;
-		const tag = try toTag(field);
-		log.debug("read field \"{s}\" type {any} n_children {d}",
-			.{ field.name, tag, field.children.items.len });
-
-		var res = try allocator.create(Array);
-		res.* = .{
-			.tag = tag,
-			.name = field.name,
-			.allocator = allocator,
-			.length = @intCast(usize, nodes[self.node_index].length),
-			.null_count = @intCast(usize, nodes[self.node_index].null_count),
-			.bufs = .{ &.{}, &.{}, &.{} },
-			.children = try allocator.alloc(*Array, field.children.items.len),
-		};
-		self.node_index += 1;
-
-		for (0..res.tag.abiLayout().nBuffers()) |i| {
-			res.bufs[i] = buffers[self.buffer_index];
-			self.buffer_index += 1;
-		}
-
-		for (field.children.items, 0..) |field_c, i| {
-			res.children[i] = try self.readField(buffers, nodes, field_c);
-		}
-		if (field.dictionary) |d| {
-			log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
-			if (self.dictionaries.get(d.id)) |v| {
-				// Copy out dictionary. Yes, this sucks for performance. Thank the shitty spec :)
-				var dict_values = try allocator.create(Array);
-				dict_values.* = .{
-					.tag = try toFieldTag(field),
-					.name = "dict values",
-					.allocator = allocator,
-					.length = v.length,
-					.null_count = v.null_count,
-					.bufs = .{
-						try allocator.alignedAlloc(u8, BufferAlignment, v.buf0.items.len),
-						try allocator.alignedAlloc(u8, BufferAlignment, v.buf1.items.len),
-						&.{}
-					},
-					.children = &.{},
-				};
-				@memcpy(dict_values.bufs[0], v.buf0.items);
-				@memcpy(dict_values.bufs[1], v.buf1.items);
-				res.children = try allocator.alloc(*Array, 1);
-				res.children[0] = dict_values;
-			} else {
-				return IpcError.DictNotFound;
-			}
-		}
-		return res;
-	}
-
-	/// Caller owns Array.
-	fn readBatch(self: *Self, batch: RecordBatch, body_len: i64) !*Array {
-		// https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
-		// > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
-		// > record batch.
-		log.debug("read batch len {d} compression {any}", .{ batch.length, batch.compression });
-		const allocator = self.allocator;
-
-		// Quickly check that the number of buffers and field nodes matches the schema.
-		if (batch.buffers.items.len != self.n_buffers) {
-			log.warn("skipped batch with {d} buffers (schema expects {d})",
-				.{ batch.buffers.items.len, self.n_buffers });
-			return IpcError.InvalidLen;
-		}
-		if (batch.nodes.items.len != self.n_fields) {
-			log.warn("skipped batch with {d} fields (schema expects {d})",
-				.{ batch.nodes.items.len, self.n_fields });
-			return IpcError.InvalidLen;
-		}
-
-		// Read flattened buffers
-		const buffers = try self.readBuffers(allocator, batch, body_len);
-		defer allocator.free(buffers);
-
-		// Recursively read tags, name, and buffers into arrays from `schema.fields`
-		self.node_index = 0;
-		self.buffer_index = 0;
-		var children = try allocator.alloc(*Array, self.schema.fields.items.len);
-		for (self.schema.fields.items, 0..) |f, i| {
-			children[i] = try self.readField(buffers, batch.nodes.items, f);
-		}
-
-		const res = try allocator.create(Array);
-		res.* = .{
-			.tag = .{ .Struct = .{ .nullable = false } },
-			.name = "record batch",
-			.allocator = allocator,
-			.length = @intCast(usize, batch.length),
-			.null_count = 0,
-			.bufs = .{ &.{}, &.{}, &.{} },
-			.children = children,
-		};
-		return res;
-	}
-
-	/// Reader owns dict.
-	fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
-		// We own the dictionaries due to any message being able to update them. The values are copied
-		// out into arrays.
-		// A maybe better alternative is adding reference counting support to Array. However, that will
-		// result in previous record batches referencing that dictionary being mutated which I'd argue
-		// is unexpected behavior.
-		const allocator = self.arena.allocator();
-
-		log.debug("read_dict {d}", .{dict.id});
-		const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
-		const n_expected = comptime abi.Array.Layout.Dictionary.nBuffers();
-		std.debug.assert(n_expected == 2);
-		const n_actual = batch.buffers.items.len;
-		if (n_expected != n_actual) {
-			log.warn("expected dictionary data to have {d} buffers, got {d}", .{ n_expected, n_actual });
-			return IpcError.InvalidNumDictionaryBuffers;
-		}
-		const node = batch.nodes.items[0];
-		const buffers = try self.readBuffers(allocator, batch, body_len);
-		defer allocator.free(buffers);
-
-		if (dict.isDelta) {
-			if (self.dictionaries.getPtr(dict.id)) |existing| {
-				try existing.buf0.appendSlice(buffers[0]);
-				try existing.buf1.appendSlice(buffers[1]);
-			} else {
-				log.warn("ignoring delta for non-existant dictionary {d}", .{ dict.id });
-			}
-		} else {
-			var buf0 = std.ArrayList(u8).init(allocator);
-			var buf1 = std.ArrayList(u8).init(allocator);
-			try buf0.appendSlice(buffers[0]);
-			try buf1.appendSlice(buffers[1]);
-
-			if (try self.dictionaries.fetchPut(dict.id, .{
-					.length = @intCast(usize, node.length),
-					.null_count = @intCast(usize, node.null_count),
-					.buf0 = buf0,
-					.buf1 = buf1,
-				})) |existing| {
-				log.warn("spec does not support replacing dictionary for dictionary {d}", .{ dict.id });
-				existing.value.deinit();
-			}
+		self.reader.deinit();
+		switch (self.source) {
+			.file => self.source.file.close(),
+			else => {}
 		}
 	}
 
-	/// Caller owns Array.
 	pub fn next(self: *Self) !?*Array {
-		const allocator = self.arena.allocator();
-		if (try self.readMessage()) |message| {
-			self.node_index = 0;
-			self.buffer_index = 0;
-			switch (message.HeaderType()) {
-				.NONE, .Schema => {
-					log.warn("ignoring unexpected message {any}", .{ message.HeaderType() });
-					try self.source.seekBy(message.BodyLength());
-				},
-				.DictionaryBatch => {
-					if (message.Header()) |header| {
-						const dict = try dictionary_batch.DictionaryBatch
-							.init(header.bytes, header.pos)
-							.Unpack(.{ .allocator = allocator });
-						try self.readDict(dict, message.BodyLength());
-
-						// Keep going until a record batch
-						return self.next();
-					}
-					return IpcError.InvalidDictionaryBatchHeader;
-				},
-				.RecordBatch => {
-					if (message.Header()) |header| {
-						const record = try record_batch.RecordBatch
-							.init(header.bytes, header.pos)
-							.Unpack(.{ .allocator = allocator });
-						return try self.readBatch(record, message.BodyLength());
-					}
-					return IpcError.InvalidRecordBatchHeader;
-				}
-			}
-		}
-		return null;
+		return self.reader.next();
 	}
 };
+
+pub fn recordBatchFileReader(allocator: std.mem.Allocator, fname: []const u8) !RecordBatchSeekReader {
+	return RecordBatchSeekReader.initFile(allocator, fname);
+}
 
 const sample = @import("../sample.zig");
 
@@ -647,12 +722,13 @@ fn testEquals(arr1: *Array, arr2: *Array) !void {
 
 test "example file path" {
 	std.testing.log_level = .debug;
-	var ipc_reader = try RecordBatchReader.initFilePath(std.testing.allocator, "./example.arrow");
+	var ipc_reader = try recordBatchFileReader(std.testing.allocator, "./example.arrow");
 	defer ipc_reader.deinit();
+
 	const expected = try sample.sampleArray(std.testing.allocator);
 	try expected.toRecordBatch("record batch");
 	defer expected.deinit();
-	try std.testing.expectEqual(expected.children.len, ipc_reader.schema.fields.items.len);
+	try std.testing.expectEqual(expected.children.len, ipc_reader.reader.schema.fields.items.len);
 
 	var n_batches: usize = 0;
 	while (try ipc_reader.next()) |rb| {
@@ -665,9 +741,8 @@ test "example file path" {
 
 test "tickers file" {
 	std.testing.log_level = .debug;
-	var ipc_reader = try RecordBatchReader.initFilePath(std.testing.allocator, "./tickers.arrow");
+	var ipc_reader = try recordBatchFileReader(std.testing.allocator, "./tickers.arrow");
 	defer ipc_reader.deinit();
-	try std.testing.expectEqual(@as(usize, 22), ipc_reader.schema.fields.items.len);
 
 	var n_batches: usize = 0;
 	while (try ipc_reader.next()) |rb| {
