@@ -105,6 +105,5 @@ test "array abi layout" {
 	try testArray(arr.children[6], 3, 5); // 15, 28
 	try testArray(arr.children[7], 1, 2); // 16, 30
 
-	// try std.testing.expectEqual(@as(usize, 35), nArrays(arr));
 	try std.testing.expectEqual(@as(usize, 31), nBuffers(arr));
 }

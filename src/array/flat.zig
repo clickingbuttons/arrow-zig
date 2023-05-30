@@ -170,6 +170,15 @@ test "primitive finish" {
 
 	const values = std.mem.bytesAsSlice(T, a.bufs[1]);
 	try std.testing.expectEqualSlices(T, &[_]T{ 1, 0, 2, 4 }, values);
+
+	const tag = tags.Tag{
+		.Int = tags.IntOptions{
+			.nullable = true,
+			.signed = true,
+			.bit_width = ._32
+		}
+	};
+	try std.testing.expectEqual(tag, a.tag);
 }
 
 test "varbinary init + deinit" {

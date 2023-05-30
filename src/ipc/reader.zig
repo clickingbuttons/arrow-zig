@@ -30,7 +30,7 @@ const magic = "ARROW1";
 const MessageLen = i32;
 const continuation = @bitCast(MessageLen, @as(u32, 0xffffffff));
 
-const log = std.log.scoped(.arrow_ipc);
+const log = std.log.scoped(.arrow);
 
 pub const IpcError = error {
 	InvalidMagicLen,

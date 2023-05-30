@@ -7,23 +7,26 @@ pub const NullableOptions = struct {
 };
 
 pub const IntOptions = struct {
-	nullable: bool,
-	signed: bool,
-	bit_width: enum {
+	const Self = @This();
+	pub const BitWidth = enum {
 		_8,
 		_16,
 		_32,
 		_64,
-	},
+	};
+	nullable: bool,
+	signed: bool,
+	bit_width: BitWidth,
 };
 
 pub const FloatOptions = struct {
-	nullable: bool,
-	bit_width: enum {
+	pub const BitWidth = enum {
 		_16,
 		_32,
 		_64,
-	},
+	};
+	nullable: bool,
+	bit_width: BitWidth,
 };
 
 pub const BinaryOptions = struct {
@@ -53,12 +56,21 @@ pub const UnionOptions = struct {
 };
 
 pub const DictOptions = struct {
-	index: enum {
+	pub const Index = enum {
 		i8,
 		i16,
 		i32,
 		// i64, // Currently zig hashmaps use u32s for capacity.
-	},
+		pub fn Type(comptime self: @This()) type {
+			return switch (self) {
+				.i32 => i32,
+				.i16 => i16,
+				.i8 => i8,
+			};
+		}
+	};
+
+	index: Index,
 };
 
 pub const DateOptions = struct {

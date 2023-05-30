@@ -5,22 +5,28 @@ const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
+const log = std.log.scoped(.arrow);
+
+pub const BuilderError = error {
+	InvalidIndexType,
+};
+
+pub const DictOptions = struct {
+	index: tags.DictOptions.Index = .i32,
+	max_load_percentage: u64 = std.hash_map.default_max_load_percentage,
+};
+
 // Context and max_load_percentage match std.HashMap.
 pub fn BuilderAdvanced(
 	comptime ChildBuilder: type,
-	comptime opts: tags.DictOptions,
 	comptime Context: type,
-	comptime max_load_percentage: u64
+	comptime opts: DictOptions,
 ) type {
-	const IndexType = switch (opts.index) {
-		.i32 => i32,
-		.i16 => i16,
-		.i8 => i8,
-	};
+	const IndexType = opts.index.Type();
 	const IndexList = std.ArrayListAligned(IndexType, array.BufferAlignment);
 
 	const AppendType = ChildBuilder.Type();
-	const HashMap = std.HashMap(AppendType, IndexType, Context, max_load_percentage);
+	const HashMap = std.HashMap(AppendType, IndexType, Context, opts.max_load_percentage);
 
 	return struct {
 		const Self = @This();
@@ -61,22 +67,61 @@ pub fn BuilderAdvanced(
 			try self.indices.append(index);
 		}
 
+		fn shrunkIndexType(self: *Self) !tags.DictOptions.Index {
+			if (self.hashmap.count() < std.math.maxInt(i8)) {
+				return .i8;
+			} else if (self.hashmap.count() < std.math.maxInt(i16)) {
+				return .i16;
+			} else if (self.hashmap.count() < std.math.maxInt(i32)) {
+				return .i32;
+			}
+			log.err("expected {d} or fewer hashmap values, got {d}", .{ std.math.maxInt(i32), self.hashmap.count() });
+			return BuilderError.InvalidIndexType;
+		}
+
+		fn shrinkIndexTo(self: *Self, comptime target_type: type) ![]align(array.BufferAlignment) u8 {
+			const indices = if (target_type == opts.index.Type())
+				try self.indices.toOwnedSlice()
+			else brk: {
+				const allocator = self.indices.allocator;
+				var res = try std.ArrayListAligned(target_type, array.BufferAlignment).initCapacity(allocator, self.indices.items.len);
+				defer res.deinit();
+				for (self.indices.items) |index| {
+					res.appendAssumeCapacity(@intCast(target_type, index));
+				}
+				self.indices.deinit();
+				break :brk try res.toOwnedSlice();
+			};
+
+			return std.mem.sliceAsBytes(indices);
+		}
+
+		fn shrinkIndex(self: *Self, index: tags.DictOptions.Index) ![]align(array.BufferAlignment)u8 {
+			return switch (index) {
+				.i8 => try self.shrinkIndexTo(i8),
+				.i16 => try self.shrinkIndexTo(i16),
+				.i32 => try self.shrinkIndexTo(i32),
+			};
+		}
+
 		pub fn finish(self: *Self) !*array.Array {
 			const allocator = self.hashmap.allocator;
 			const children = try allocator.alloc(*array.Array, 1);
+			const length = self.indices.items.len;
+			const shrunk_index = try self.shrunkIndexType();
 			children[0] = try self.child.finish();
 			children[0].name = "dict values";
 			self.hashmap.deinit();
 			var res = try array.Array.init(allocator);
 			res.* = .{
-				.tag = tags.Tag{ .Dictionary = opts },
+				.tag = tags.Tag{ .Dictionary = .{ .index = shrunk_index } },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
-				.length = self.indices.items.len,
+				.length = length,
 				.null_count = 0,
 				.bufs = .{
 					&.{},
-					std.mem.sliceAsBytes(try self.indices.toOwnedSlice()),
+					try self.shrinkIndex(shrunk_index),
 					&.{},
 				},
 				.children = children,
@@ -84,7 +129,10 @@ pub fn BuilderAdvanced(
 			if (children[0].tag.abiLayout().hasValidity()) {
 				res.*.null_count = children[0].null_count;
 				res.*.bufs[0] = children[0].bufs[0];
-				children[0].tag.setNullable(false);
+				// Since the validity array is hoisted up into the dictionary, I think that the child
+				// should have nullable set to false. However, pyarrow thinks differently so let's be
+				// compatible.
+				// children[0].tag.setNullable(false);
 				children[0].null_count = 0;
 				children[0].bufs[0] = &.{};
 			}
@@ -108,8 +156,13 @@ pub fn getAutoEqlFn(comptime K: type, comptime Context: type) (fn (Context, K, K
 	return struct {
 		fn eql(ctx: Context, a: K, b: K) bool {
 			_ = ctx;
-			// TODO: handle slices
-			return std.meta.eql(a, b);
+			return switch (@typeInfo(K)) {
+				.Pointer => |info| switch (info.size) {
+					.One, .Many, .C => a == b,
+					.Slice => std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b)),
+				},
+				else => std.meta.eql(a, b)
+			};
 		}
 	}.eql;
 }
@@ -126,10 +179,9 @@ test "init + deinit string" {
 	const T = []const u8;
 	var b = try BuilderAdvanced(
 		flat.Builder(T),
-		.{ .index = .i8 },
 		AutoContext(T),
-		std.hash_map.default_max_load_percentage
-		).init(std.testing.allocator);
+		.{ .index = .i8 },
+	).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append("asdf");
@@ -146,9 +198,8 @@ test "init + deinit list" {
 	const T = ?[]const []const u8;
 	var b = try BuilderAdvanced(
 		list.Builder(T),
-		.{ .index = .i8 },
 		AutoContext(T),
-		std.hash_map.default_max_load_percentage
+		.{ .index = .i8 },
 		).init(std.testing.allocator);
 	defer b.deinit();
 
@@ -166,9 +217,8 @@ test "init + deinit struct" {
 	};
 	var b = try BuilderAdvanced(
 		struct_.Builder(T),
-		.{ .index = .i8 },
 		AutoContext(T),
-		std.hash_map.default_max_load_percentage
+		.{ .index = .i8 },
 	).init(std.testing.allocator);
 	defer b.deinit();
 
@@ -182,11 +232,17 @@ test "init + deinit struct" {
 
 test "finish" {
 	const T = ?i8;
+	const child_tag = tags.Tag{
+		.Int = tags.IntOptions{
+			.nullable = true,
+			.signed = true,
+			.bit_width = ._8
+		}
+	};
 	var b = try BuilderAdvanced(
 		flat.Builder(T),
-		.{ .index = .i8 },
 		AutoContext(T),
-		std.hash_map.default_max_load_percentage
+		.{ .index = .i8 },
 	).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(1);
@@ -197,14 +253,14 @@ test "finish" {
 	const offsets = std.mem.bytesAsSlice(i8, a.bufs[1]);
 	try std.testing.expectEqualSlices(i8, &[_]i8{ 0, 1 }, offsets);
 	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1 }, a.children[0].bufs[1][0..2]);
+	try std.testing.expectEqual(child_tag, a.children[0].tag);
 }
 
 pub fn Builder(comptime T: type) type {
 	return BuilderAdvanced(
 		builder.Builder(T),
-		.{ .index = .i16 },
 		AutoContext(T),
-		std.hash_map.default_max_load_percentage
+		.{ .index = .i32 },
 	);
 }
 
@@ -213,6 +269,18 @@ test "convienence finish" {
 	var b = try Builder(T).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(1);
+
+	const a = try b.finish();
+	defer a.deinit();
+}
+
+test "convienence string" {
+	var b = try Builder(?[]const u8).init(std.testing.allocator);
+	try b.append("asdf");
+	try b.append("hello");
+	try b.append(null);
+
+	try std.testing.expectEqual(@as(usize, 3), b.indices.items.len);
 
 	const a = try b.finish();
 	defer a.deinit();

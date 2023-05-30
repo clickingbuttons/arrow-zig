@@ -43,7 +43,7 @@
 - [x] 64 bytes align
 
 ## impl
-- [ ] more dict types
+- [x] more dict types
 - [x] datetime types
 - [ ] decimal types
 	- wait for https://github.com/ziglang/zig/issues/15678
