@@ -33,7 +33,6 @@ pub fn build(b: *std.Build) void {
 		.optimize = optimize,
 	});
 	const lz4_mod = lz4.module("lz4");
-	lib.linkLibrary(lz4.artifact("lz4"));
 	lib.addModule("lz4", lz4_mod);
 
 	const main_tests = b.addTest(.{

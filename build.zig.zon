@@ -8,8 +8,8 @@
 			.hash = "1220b27046f2f95868e91c1d12740626ca580e33aed2dce17c212aec8e0124ead9c9"
 		},
 		.lz4 = .{
-			.url = "https://github.com/clickingbuttons/lz4/archive/refs/heads/master.tar.gz",
-			.hash = "1220ba841473bb16970a3c8ed4f450d2b67c3d4f59778bae37162c49da74520d5c53",
+			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.1.tar.gz",
+			.hash = "1220bf650a7756887ab50c80e1e4d50b0dbbcaee5e3f333962db5877597ffef639c2"
 		},
 	}
 }

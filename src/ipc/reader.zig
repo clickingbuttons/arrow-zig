@@ -1,6 +1,6 @@
 const std = @import("std");
 const lz4 = @import("lz4");
-const Footer = @import("./gen/Footer.fb.zig").Footer;
+const footer_mod = @import("./gen/Footer.fb.zig");
 const Message = @import("./gen/Message.fb.zig").Message;
 const schema_mod = @import("./gen/Schema.fb.zig");
 const record_batch = @import("./gen/RecordBatch.fb.zig");
@@ -14,6 +14,7 @@ const FieldType = @import("./gen/Type.fb.zig").TypeT;
 const tags = @import("../tags.zig");
 const abi = @import("../abi.zig");
 
+const Allocator = std.mem.Allocator;
 const Array = array_mod.Array;
 const BufferAlignment = array_mod.BufferAlignment;
 const BufferT = []align(BufferAlignment) u8;
@@ -23,6 +24,8 @@ const Schema = schema_mod.SchemaT;
 const RecordBatch = record_batch.RecordBatchT;
 const DictionaryBatch = dictionary_batch.DictionaryBatchT;
 const Field = field_mod.FieldT;
+const Footer = footer_mod.FooterT;
+
 const magic = "ARROW1";
 const MessageLen = i32;
 const continuation = @bitCast(MessageLen, @as(u32, 0xffffffff));
@@ -46,6 +49,7 @@ pub const IpcError = error {
 	DictNotFound,
 	NoDictionaryData,
 	InvalidNumDictionaryBuffers,
+	InvalidFooterLen,
 };
 
 fn toDictTag(dict: *DictionaryEncoding) !tags.Tag {
@@ -289,9 +293,10 @@ fn nBuffers(schema: Schema) !usize {
 	return res;
 }
 
-/// Reads an IPC stream.
-pub fn RecordBatchReader(comptime reader: type) type {
+/// Reads messages out of an IPC stream.
+pub fn RecordBatchIterator(comptime ReaderType: type) type {
 	return struct {
+		const Self = @This();
 		const Dictionaries = std.AutoHashMap(i64, struct {
 			length: usize,
 			null_count: usize,
@@ -303,11 +308,10 @@ pub fn RecordBatchReader(comptime reader: type) type {
 				self.buf1.deinit();
 			}
 		});
-		const Source = std.io.BufferedReader(4096, reader); 
 
-		allocator: std.mem.Allocator,
+		allocator: Allocator,
 		arena: std.heap.ArenaAllocator,
-		source: Source,
+		source: ReaderType,
 		schema: Schema,
 		n_fields: usize,
 		n_buffers: usize,
@@ -316,9 +320,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 		buffer_index: usize = 0,
 		dictionaries: Dictionaries,
 
-		const Self = @This();
-
-		pub fn init(allocator: std.mem.Allocator, source: Source) !Self {
+		pub fn init(allocator: Allocator, source: ReaderType) !Self {
 			var res = Self {
 				.allocator = allocator,
 				.arena = std.heap.ArenaAllocator.init(allocator),
@@ -328,6 +330,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 				.n_buffers = undefined,
 				.dictionaries = Dictionaries.init(allocator),
 			};
+			errdefer res.deinit();
 			res.schema = try res.readSchema();
 			res.n_fields = nFields(res.schema);
 			res.n_buffers = try nBuffers(res.schema);
@@ -354,7 +357,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			return @intCast(usize, res);
 		}
 
-		fn readMessage(self: *Self) !?Message {
+		pub fn readMessage(self: *Self) !?Message {
 			// <continuation: 0xFFFFFFFF> (optional)
 			// <metadata_size: int32>
 			// <metadata_flatbuffer: bytes>
@@ -363,7 +366,8 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			const message_len = try self.readMessageLen();
 			if (message_len == 0) return null; // EOS
 
-			var message_buf = try self.arena.allocator().alloc(u8, message_len);
+			const allocator = self.arena.allocator();
+			var message_buf = try allocator.alloc(u8, message_len);
 			const n_read = try self.source.reader().read(message_buf);
 			if (n_read != message_buf.len) {
 				return IpcError.InvalidLen;
@@ -410,8 +414,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 		) !*Array {
 			const allocator = self.allocator;
 			const tag = try toTag(field);
-			log.debug("read field \"{s}\" type {any} n_children {d}",
-				.{ field.name, tag, field.children.items.len });
+			// log.debug("read field \"{s}\" type {any} n_children {d}", .{ field.name, tag, field.children.items.len });
 
 			var res = try allocator.create(Array);
 			res.* = .{
@@ -434,7 +437,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 				res.children[i] = try self.readField(buffers, nodes, field_c);
 			}
 			if (field.dictionary) |d| {
-				log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
+				// log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
 				if (self.dictionaries.get(d.id)) |v| {
 					// Copy out dictionary. Yes, this sucks for performance. Thank the shitty spec :)
 					var dict_values = try allocator.create(Array);
@@ -462,7 +465,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			return res;
 		}
 
-		fn readBuffer(self: *Self, allocator: std.mem.Allocator, size: usize, compression: ?*BodyCompression) !BufferT {
+		fn readBuffer(self: *Self, allocator: Allocator, size: usize, compression: ?*BodyCompression) !BufferT {
 			// Undocumented, but whatever :)
 			if (size == 0) {
 				return try allocator.alignedAlloc(u8, BufferAlignment, 0);
@@ -478,8 +481,8 @@ pub fn RecordBatchReader(comptime reader: type) type {
 					const res = try self.source.reader().readIntLittle(i64);
 					break :brk if (res == -1) size else @intCast(usize, res);
 				} else size;
-			std.debug.print("compressed {d} uncompressed {d}\n", .{ size, uncompressed_size });
 			var res = try allocator.alignedAlloc(u8, BufferAlignment, uncompressed_size);
+			errdefer allocator.free(res);
 			var n_read: ?usize = null;
 
 			if (compression) |c| {
@@ -506,15 +509,23 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			return res;
 		}
 
-		fn readBuffers(self: *Self, allocator: std.mem.Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
+		fn readBuffers(self: *Self, allocator: Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
+			var i: usize = 0;
 			var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
-			errdefer allocator.free(buffers);
+			errdefer {
+				for (0..i) |j| {
+					allocator.free(buffers[j]);
+				}
+				allocator.free(buffers);
+			}
 
-			for (batch.buffers.items, 0..) |info, i| {
+			for (batch.buffers.items) |info| {
 				const size = @intCast(usize, info.length);
 				buffers[i] = try self.readBuffer(allocator, size, batch.compression);
 
 				const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
+				i += 1;
+
 				const seek = next_offset - (info.offset + info.length);
 				try self.source.reader().skipBytes(@intCast(u64, seek), .{});
 			}
@@ -567,7 +578,17 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			return res;
 		}
 
-		/// Reader owns dict.
+		pub fn nextBatch(self: *Self, message: *const Message) !?*Array {
+			const allocator = self.arena.allocator();
+			if (message.Header()) |header| {
+				const record = try record_batch.RecordBatch
+					.init(header.bytes, header.pos)
+					.Unpack(.{ .allocator = allocator });
+				return try self.readBatch(record, message.BodyLength());
+			}
+			return IpcError.InvalidRecordBatchHeader;
+		}
+
 		fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
 			// We own the dictionaries due to any message being able to update them. The values are copied
 			// out into arrays.
@@ -576,7 +597,7 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			// is unexpected behavior.
 			const allocator = self.arena.allocator();
 
-			log.debug("read_dict {d}", .{dict.id});
+			log.debug("read_dict {d}", .{ dict.id });
 			const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
 			const n_expected = comptime abi.Array.Layout.Dictionary.nBuffers();
 			std.debug.assert(n_expected == 2);
@@ -614,38 +635,32 @@ pub fn RecordBatchReader(comptime reader: type) type {
 			}
 		}
 
+		pub fn nextDict(self: *Self, message: *const Message) !void {
+			const allocator = self.arena.allocator();
+			if (message.Header()) |header| {
+				const dict = try dictionary_batch.DictionaryBatch
+					.init(header.bytes, header.pos)
+					.Unpack(.{ .allocator = allocator });
+				try self.readDict(dict, message.BodyLength());
+			} else {
+				return IpcError.InvalidDictionaryBatchHeader;
+			}
+		}
+
 		/// Caller owns Array.
 		pub fn next(self: *Self) !?*Array {
-			const allocator = self.arena.allocator();
 			if (try self.readMessage()) |message| {
-				self.node_index = 0;
-				self.buffer_index = 0;
 				switch (message.HeaderType()) {
 					.NONE, .Schema => {
 						log.warn("ignoring unexpected message {any}", .{ message.HeaderType() });
 						try self.source.reader().skipBytes(@intCast(u64, message.BodyLength()), .{});
 					},
 					.DictionaryBatch => {
-						if (message.Header()) |header| {
-							const dict = try dictionary_batch.DictionaryBatch
-								.init(header.bytes, header.pos)
-								.Unpack(.{ .allocator = allocator });
-							try self.readDict(dict, message.BodyLength());
-
-							// Keep going until a record batch
-							return self.next();
-						}
-						return IpcError.InvalidDictionaryBatchHeader;
+						try self.nextDict(&message);
+						// Keep going until a record batch
+						return self.next();
 					},
-					.RecordBatch => {
-						if (message.Header()) |header| {
-							const record = try record_batch.RecordBatch
-								.init(header.bytes, header.pos)
-								.Unpack(.{ .allocator = allocator });
-							return try self.readBatch(record, message.BodyLength());
-						}
-						return IpcError.InvalidRecordBatchHeader;
-					}
+					.RecordBatch => return try self.nextBatch(&message),
 				}
 			}
 			return null;
@@ -653,48 +668,134 @@ pub fn RecordBatchReader(comptime reader: type) type {
 	};
 }
 
-pub fn recordBatchReader(allocator: std.mem.Allocator, reader: anytype) !RecordBatchReader(@TypeOf(reader)) {
-	return RecordBatchReader(@TypeOf(reader)).init(allocator, std.io.bufferedReader(reader));
+fn BufferedReader(comptime ReaderType: type) type {
+	return std.io.BufferedReader(4096, ReaderType);
 }
 
-/// Reads a buffer.
-const RecordBatchSeekReader = struct {
-	const Reader = RecordBatchReader(std.io.StreamSource.Reader);
+pub fn recordBatchReader(
+	allocator: Allocator,
+	reader: anytype
+) !RecordBatchIterator(BufferedReader(@TypeOf(reader))) {
+	var buffered = std.io.bufferedReader(reader);
+	return RecordBatchIterator(BufferedReader(@TypeOf(reader))).init(allocator, buffered);
+}
 
-	source: std.io.StreamSource,
-	reader: Reader,
-
+/// Handles file footer and strange spec requirements. Convienently closes file in .deinit.
+const RecordBatchFileReader = struct {
 	const Self = @This();
+	const Reader = RecordBatchIterator(BufferedReader(std.fs.File.Reader));
 
-	pub fn init(allocator: std.mem.Allocator, source: std.io.StreamSource) !Self {
-		return .{
-			.source = source,
-			.reader = try Reader.init(allocator, std.io.bufferedReader(@constCast(&source).reader())),
-		};
+	allocator: Allocator,
+	file: std.fs.File,
+	footer: Footer,
+	reader: Reader,
+	batch_index: usize,
+
+	fn readMagic(file: std.fs.File, comptime location: []const u8) !void {
+		var maybe_magic: [magic.len]u8 = undefined;
+		const n_read = try file.read(&maybe_magic);
+		if (magic.len != n_read) {
+			log.err("expected {s} magic len {d}, got {d}", .{ location, magic.len, n_read });
+			return IpcError.InvalidMagicLen;
+		}
+		if (!std.mem.eql(u8, magic, &maybe_magic)) {
+			log.err("expected {s} magic {s}, got {s}", .{ location, magic, maybe_magic });
+			return IpcError.InvalidMagic;
+		}
 	}
 
-	pub fn initFile(allocator: std.mem.Allocator, fname: []const u8) !Self {
-		const file = try std.fs.cwd().openFile(fname, .{});
-		// TODO: peek
-		try file.seekBy(8);
-		return init(allocator, std.io.StreamSource { .file = file });
+	fn readFooter(allocator: Allocator, file: std.fs.File) !Footer {
+		const FooterSize = i32;
+		const seek_back = -(@as(i64, magic.len) + @sizeOf(FooterSize));
+		try file.seekFromEnd(seek_back);
+		const pos = try file.getPos();
+		const footer_len = try file.reader().readIntLittle(FooterSize);
+		if (footer_len < 0 or footer_len > pos) {
+			log.err("invalid footer len {d}", .{ footer_len });
+			return IpcError.InvalidFooterLen;
+		}
+		try readMagic(file, "end");
+
+		const footer_buf = try allocator.alloc(u8, @intCast(usize, footer_len));
+		defer allocator.free(footer_buf);
+		try file.seekFromEnd(seek_back - footer_len);
+		const n_read = try file.read(footer_buf);
+		if (n_read != footer_buf.len) {
+			return IpcError.InvalidLen;
+		}
+
+		return try footer_mod.Footer.GetRootAs(footer_buf, 0).Unpack(.{ .allocator = allocator });
+	}
+
+	fn initReader(allocator: Allocator, file: std.fs.File, footer: Footer) !Reader {
+		try file.seekTo(8); // 8 byte padding for flatbuffers
+		// It will read the schema from the streaming format rather than the footer.
+		// TODO: validate footer matches
+		var reader = try recordBatchReader(allocator, file.reader());
+
+		// From the spec:
+		// > In the file format, there is no requirement that dictionary keys should be defined in
+		// > a DictionaryBatch before they are used in a RecordBatch, as long as the keys are defined
+		// > somewhere in the file.
+		// We respect this by reading all dictionaries on init.
+
+		// > Further more, it is invalid to have more than one non-delta dictionary batch per
+		// > dictionary ID (i.e. dictionary replacement is not supported).
+		// We disrespect this by reading them all anyways. It doesn't matter.
+
+		// > Delta dictionaries are applied in the order they appear in the file footer.
+		// We respect this.
+
+		for (footer.dictionaries.items) |d| {
+			const offset = @intCast(usize, d.offset) - 4;
+			try file.seekTo(offset);
+			if (try reader.readMessage()) |message| {
+				try reader.nextDict(&message);
+			} else {
+				log.warn("invalid dictionary message at offset {d}", .{ offset });
+			}
+		}
+
+		return reader;
+	}
+
+	pub fn init(allocator: Allocator, fname: []const u8) !Self {
+		var file = try std.fs.cwd().openFile(fname, .{});
+
+		try readMagic(file, "start");
+		const footer = try readFooter(allocator, file);
+
+		return .{
+			.allocator = allocator,
+			.file = file,
+			.footer = footer,
+			.reader = try initReader(allocator, file, footer),
+			.batch_index = 0,
+		};
 	}
 
 	pub fn deinit(self: *Self) void {
 		self.reader.deinit();
-		switch (self.source) {
-			.file => self.source.file.close(),
-			else => {}
-		}
+		self.footer.deinit(self.allocator);
+		self.file.close();
 	}
 
 	pub fn next(self: *Self) !?*Array {
-		return self.reader.next();
+		if (self.batch_index >= self.footer.recordBatches.items.len) return null;
+
+		const rb = self.footer.recordBatches.items[self.batch_index];
+		const offset = @intCast(usize, rb.offset) - 4;
+		try self.file.seekTo(offset);
+		self.batch_index += 1;
+
+		if (try self.reader.readMessage()) |message| return try self.reader.nextBatch(&message);
+		log.err("invalid record batch message at offset {d}", .{ offset });
+		return IpcError.InvalidRecordBatch;
 	}
 };
 
-pub fn recordBatchFileReader(allocator: std.mem.Allocator, fname: []const u8) !RecordBatchSeekReader {
-	return RecordBatchSeekReader.initFile(allocator, fname);
+pub fn recordBatchFileReader(allocator: Allocator, fname: []const u8) !RecordBatchFileReader {
+	return RecordBatchFileReader.init(allocator, fname);
 }
 
 const sample = @import("../sample.zig");
