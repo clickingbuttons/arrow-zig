@@ -22,15 +22,16 @@ test "init + deinit optional child and parent" {
 }
 
 test "finish" {
-	var b = try Builder(?[3]i8).init(std.testing.allocator);
-	try b.append([_]i8{1,2,3});
+	var b = try Builder(?[3]?i8).init(std.testing.allocator);
+	try b.append([_]?i8{1,2,3});
 	try b.append(null);
+	try b.append([_]?i8{4,null,6});
 
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(usize, 2), a.length);
+	try std.testing.expectEqual(@as(usize, 3), a.length);
 	try std.testing.expectEqual(@as(usize, 1), a.null_count);
-	try std.testing.expectEqual(@as(u8, 0b01), a.bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b101), a.bufs[0][0]);
 	try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 0, 0, 0 }, a.children[0].bufs[1][0..6]);
 }

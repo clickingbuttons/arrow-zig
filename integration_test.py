@@ -65,6 +65,7 @@ expected = {
 	"f": [None, 3, 4],
 	"g": [None, 3, 1],
 	"h": [None, 3, 4],
+	"i": [None, [(3, 6)], [( 4, 7 )]],
 }
 
 code = 0

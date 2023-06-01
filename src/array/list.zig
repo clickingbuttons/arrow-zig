@@ -53,7 +53,7 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			return switch (@typeInfo(@TypeOf(value))) {
 				.Null => {
 					if (OffsetList != void) {
-						try self.offsets.append(self.offsets.items[self.offsets.items.len - 1]);
+						try self.offsets.append(self.offsets.getLast());
 					} else {
 						for (0..fixed_len) |_| {
 							try self.child.append(0);
@@ -61,13 +61,12 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 					}
 				},
 				.Optional => {
-					const is_null = value == null;
-					try self.validity.resize(self.validity.capacity() + 1, !is_null);
-					if (is_null) {
+					try self.validity.resize(self.validity.capacity() + 1, value != null);
+					if (value) |v| {
+						try self.appendAny(v);
+					} else {
 						self.null_count += 1;
 						try self.appendAny(null);
-					} else {
-						try self.appendAny(value.?);
 					}
 				},
 				.Pointer => |p| switch (p.size) {

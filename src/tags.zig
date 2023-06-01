@@ -127,7 +127,7 @@ pub const Tag = union(enum) {
 	Dictionary: DictOptions,
 	// Decimal128(u8, i8),
 	// Decimal256(u8, i8),
-	// Map(FieldRef, bool),
+	Map: NullableOptions,
 	// RunEndEncoded(FieldRef, FieldRef),
 
 	const Self = @This();
@@ -217,6 +217,7 @@ pub const Tag = union(enum) {
 			.Union => |u| if (u.dense) .DenseUnion else .SparseUnion,
 			.Null => .Null,
 			.Dictionary => .Dictionary,
+			.Map => .Map,
 		};
 	}
 
@@ -301,7 +302,8 @@ pub const Tag = union(enum) {
 				.i8 => "c",
 				.i16 => "s",
 				.i32 => "i",
-			}
+			},
+			.Map => "+m",
 		};
 	}
 
@@ -330,6 +332,7 @@ pub const Tag = union(enum) {
 			.Struct => |opts| opts.nullable,
 			.Union => |opts| opts.nullable,
 			.Dictionary => true,
+			.Map => |opts| opts.nullable,
 		};
 	}
 
@@ -351,6 +354,7 @@ pub const Tag = union(enum) {
 			.Struct => |*opts| opts.nullable = is_nullable,
 			.Union => |*opts| opts.nullable = is_nullable,
 			.Dictionary => std.debug.print("tried to set nullable on {any}\n", .{ self }),
+			.Map => |*opts| opts.nullable = is_nullable,
 		};
 	}
 };

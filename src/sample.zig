@@ -6,6 +6,7 @@ const flat = @import("./array/flat.zig");
 const struct_ = @import("./array/struct.zig");
 const dict = @import("./array/dict.zig");
 const union_ = @import("./array/union.zig");
+const map = @import("./array/map.zig");
 
 pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 	const StructT = struct {
@@ -29,8 +30,9 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 		f: builder.Builder(?UnionT),
 		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .nullable = true, .dense = false }, void),
 		h: dict.Builder(?u32),
+		i: map.Builder(?struct{ i8, ?i64, }),
 	};
-	var b = try struct_.BuilderAdvanced(T, .{ .nullable = true }, void).init(allocator);
+	var b = try struct_.BuilderAdvanced(T, true, void).init(allocator);
 	{
 		errdefer b.deinit();
 
@@ -45,6 +47,7 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 			.f = UnionT{ .a = 3 },
 			.g = .{ .i = 3 },
 			.h = 3,
+			.i = .{ 3, 6 },
 		});
 		try b.append(.{
 			.a = "goodbye",
@@ -55,6 +58,7 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 			.f = .{ .b = 4 },
 			.g = .{ .f = 1 },
 			.h = 4,
+			.i = .{ 4, 7 },
 		});
 	}
 
@@ -93,7 +97,7 @@ fn testArray(arr: *array.Array, expected_n_nodes: usize, expected_n_bufs: usize)
 test "array abi layout" {
 	const arr = try sampleArray(std.testing.allocator);
 	defer arr.deinit();
-	try std.testing.expectEqual(@as(usize, 8), arr.children.len);
+	try std.testing.expectEqual(@as(usize, 9), arr.children.len);
 
 	// Tested against pyarrow
 	try testArray(arr.children[0], 1, 3); // 1, 3
@@ -104,6 +108,5 @@ test "array abi layout" {
 	try testArray(arr.children[5], 3, 6); // 12, 23
 	try testArray(arr.children[6], 3, 5); // 15, 28
 	try testArray(arr.children[7], 1, 2); // 16, 30
-
-	try std.testing.expectEqual(@as(usize, 31), nBuffers(arr));
+	try testArray(arr.children[8], 4, 7); // 20, 37
 }

@@ -3,15 +3,17 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
 const flat = @import("./flat.zig");
+const builder = @import("./builder.zig");
 
-fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type {
+fn MakeStructType(comptime ChildrenBuilders: type, comptime nullable: bool) type {
 	const t = @typeInfo(ChildrenBuilders).Struct;
  	var fields: [t.fields.len]std.builtin.Type.StructField = undefined;
  	for (t.fields, 0..) |f, i| {
 		const ChildBuilderType = f.type.Type();
 		if (nullable and @typeInfo(ChildBuilderType) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(ChildBuilderType) ++ "' is not nullable."
-				++ " ALL nullable structs MUST be nullable");
+				++ " ALL nullable struct fields MUST be nullable"
+				++ " so that `.append(null)` can append null to each field");
 		}
  		fields[i] = .{
  			.name = f.name,
@@ -21,7 +23,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type
  			.alignment = 0,
 		};
  	}
- 	const T = @Type(.{
+ 	return @Type(.{
  		.Struct = .{
  			.layout = .Auto,
  			.fields = fields[0..],
@@ -29,16 +31,23 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type
  			.is_tuple = false,
  		},
  	});
-
-	return if (nullable) ?T else T;
 }
 
 // ChildrenBuilders is a struct of { field_name: builder_type }
-pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.NullableOptions, comptime StructType: type) type {
-	const NullCount = if (opts.nullable) usize else void;
-	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
+pub fn BuilderAdvanced(
+	comptime ChildrenBuilders: type,
+	comptime nullable: bool,
+	comptime InStructType: type, // Needed because there is no struct -> struct type coercion
+) type {
+	const NullCount = if (nullable) usize else void;
+	const ValidityList = if (nullable) std.bit_set.DynamicBitSet else void;
 
-	const AppendType = if (StructType != void) StructType else MakeAppendType(ChildrenBuilders, opts.nullable);
+	const Struct = if (InStructType != void)
+		InStructType
+	else
+		MakeStructType(ChildrenBuilders, nullable);
+
+	const AppendType = if (nullable) ?Struct else Struct;
 
 	return struct {
 		const Self = @This();
@@ -50,6 +59,10 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Null
 
 		pub fn Type() type {
 			return AppendType;
+		}
+
+		pub fn StructType() type {
+			return Struct;
 		}
 
 		pub fn init(allocator: std.mem.Allocator) !Self {
@@ -112,7 +125,7 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Null
 			}
 			var res = try array.Array.init(self.allocator);
 			res.* = .{
-				.tag = tags.Tag{ .Struct = opts },
+				.tag = tags.Tag{ .Struct = .{ .nullable = nullable } },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = children[0].length,
@@ -136,10 +149,12 @@ test "struct advanced" {
 		key: flat.Builder([]const u8),
 		val: flat.Builder(i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = false }, void).init(std.testing.allocator);
+	const B = BuilderAdvanced(ChildrenBuilders, false, void);
+	const T = B.StructType();
+	var b = try B.init(std.testing.allocator);
 	defer b.deinit();
 
-	try b.append(.{ .key = "asdf", .val = 1 });
+	try b.append(T{ .key = "asdf", .val = 1 });
 	try b.append(.{ .key = "ffgg", .val = 2 });
 }
 
@@ -148,15 +163,19 @@ test "nullable struct advanced with finish" {
 		key: flat.Builder(?[]const u8),
 		val: flat.Builder(?i32),
 	};
-	var b = try BuilderAdvanced(ChildrenBuilders, .{ .nullable = true }, void).init(std.testing.allocator);
+	const B = BuilderAdvanced(ChildrenBuilders, true, void);
+	const T = B.StructType();
+	var b = try B.init(std.testing.allocator);
 
 	try b.append(null);
-	try b.append(.{ .key = "asdf", .val = 1 });
+	try b.append(T{ .key = "asdf", .val = 1 });
+	try b.append(.{ .key = "asdf", .val = null });
 
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b110), a.bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b010), a.children[1].bufs[0][0]);
 }
 
 fn MakeChildrenBuilders(comptime Struct: type, comptime nullable: bool) type {
@@ -165,11 +184,12 @@ fn MakeChildrenBuilders(comptime Struct: type, comptime nullable: bool) type {
  	for (t.fields, 0..) |f, i| {
 		if (nullable and @typeInfo(f.type) != .Optional) {
 			@compileError("'" ++ f.name ++ ": " ++ @typeName(f.type) ++ "' is not nullable."
-				++ " ALL nullable struct fields MUST be nullable");
+				++ " ALL nullable struct fields MUST be nullable"
+				++ " so that `.append(null)` can append null to each field");
 		}
  		fields[i] = .{
  			.name = f.name,
- 			.type = flat.Builder(f.type),
+ 			.type = builder.Builder(f.type),
  			.default_value = null,
  			.is_comptime = false,
  			.alignment = 0,
@@ -194,7 +214,7 @@ pub fn Builder(comptime Struct: type) type {
 	}
 	const ChildrenBuilders = MakeChildrenBuilders(Child, nullable);
 
-	return BuilderAdvanced(ChildrenBuilders, .{ .nullable = nullable }, Struct);
+	return BuilderAdvanced(ChildrenBuilders, nullable, Child);
 }
 
 test "init + deinit" {
@@ -235,6 +255,7 @@ test "c abi" {
 	try b.append(null);
 	try b.append(.{ .val = 1 });
 	try b.append(T{ .val = 2 });
+	try b.append(T{ .val = null });
 
 	var a = try b.finish();
 	var c = try a.toOwnedAbi();

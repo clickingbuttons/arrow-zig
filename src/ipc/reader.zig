@@ -245,7 +245,7 @@ fn toFieldTag(field: Field) !tags.Tag {
 			log.warn("fixed size list field {s} missing fixed length", .{ field.name });
 			return IpcError.InvalidFieldTag;
 		},
-		// .Map: ?*MapT,
+		.Map => .{ .Map = .{ .nullable = field.nullable } },
 		// .RunEndEncoded: ?*RunEndEncodedT,
 		else => |t| {
 			log.warn("field {s} unknown type {any}", .{ field.name, t });
@@ -330,7 +330,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 				.n_buffers = undefined,
 				.dictionaries = Dictionaries.init(allocator),
 			};
-			errdefer res.deinit();
+			errdefer res.arena.deinit();
 			res.schema = try res.readSchema();
 			res.n_fields = nFields(res.schema);
 			res.n_buffers = try nBuffers(res.schema);
@@ -763,7 +763,8 @@ const RecordBatchFileReader = struct {
 		var file = try std.fs.cwd().openFile(fname, .{});
 
 		try readMagic(file, "start");
-		const footer = try readFooter(allocator, file);
+		var footer = try readFooter(allocator, file);
+		errdefer footer.deinit(allocator);
 
 		return .{
 			.allocator = allocator,

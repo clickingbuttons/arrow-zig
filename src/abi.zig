@@ -51,6 +51,7 @@ pub const Array = extern struct {
 		DenseUnion,
 		Null,
 		Dictionary,
+		Map, // Undocumented :)
 
 		const Self = @This();
 		pub fn hasTypeIds(self: Self) bool {
@@ -62,14 +63,14 @@ pub const Array = extern struct {
 
 		pub fn hasValidity(self: Self) bool {
 			return switch (self) {
-				.Primitive, .VariableBinary, .List, .FixedList, .Struct, .Dictionary => true,
+				.Primitive, .VariableBinary, .List, .FixedList, .Struct, .Dictionary, .Map => true,
 				else => false
 			};
 		}
 
 		pub fn hasOffsets(self: Self) bool {
 			return switch (self) {
-				.VariableBinary, .List, .DenseUnion => true,
+				.VariableBinary, .List, .DenseUnion, .Map => true,
 				else => false
 			};
 		}
@@ -93,7 +94,7 @@ pub const Array = extern struct {
 
 		pub fn hasChildren(self: Self) bool {
 			return switch (self) {
-				.List, .FixedList, .Struct, .SparseUnion, .DenseUnion, .Dictionary => true,
+				.List, .FixedList, .Struct, .SparseUnion, .DenseUnion, .Dictionary, .Map => true,
 				else => false,
 			};
 		}
