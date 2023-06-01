@@ -8,6 +8,9 @@ const builder = @import("./builder.zig");
 const Allocator = std.mem.Allocator;
 
 fn MakeTupleType(comptime KeyType: type, comptime ValueType: type) type {
+	if (@typeInfo(KeyType) == .Optional) {
+		@compileError("map key type '" ++ @typeName(KeyType) ++ "' cannot be nullable");
+	}
  	return @Type(.{
  		.Struct = .{
  			.layout = .Auto,
@@ -67,13 +70,17 @@ pub fn BuilderAdvanced(
 		}
 
 		pub fn init(allocator: std.mem.Allocator) !Self {
+			var key_builder = try KeyBuilder.init(allocator);
+			errdefer key_builder.deinit();
+			var value_builder = try ValueBuilder.init(allocator);
+			errdefer value_builder.deinit();
 			var res = Self {
 				.allocator = allocator,
 				.null_count = if (NullCount != void) 0 else {},
 				.validity = if (ValidityList != void) try ValidityList.initEmpty(allocator, 0) else {},
 				.offsets = OffsetList.init(allocator),
-				.key_builder = try KeyBuilder.init(allocator),
-				.value_builder = try ValueBuilder.init(allocator),
+				.key_builder = key_builder,
+				.value_builder = value_builder,
 			};
 			try res.offsets.append(0);
 
@@ -114,9 +121,7 @@ pub fn BuilderAdvanced(
 		}
 
 		pub fn appendSlice(self: *Self, kvs: []const Tuple) Allocator.Error!void {
-			for (kvs) |kv| {
-				try self.appendTuple(kv);
-			}
+			for (kvs) |kv| try self.appendTuple(kv);
 			try self.appendValidity(true);
 			try self.offsets.append(self.offsets.getLast() + @intCast(i32, kvs.len));
 		}
@@ -153,6 +158,9 @@ pub fn BuilderAdvanced(
 		}
 
 		pub fn finish(self: *Self) !*array.Array {
+			// > A map<string, float64> array has format string +m; its single child has name entries and
+			// > format string +s; its two grandchildren have names key and value, and format strings u
+			// > and g respectively.
 			const allocator = self.allocator;
 
 			const children = try allocator.alloc(*array.Array, 1);
@@ -195,12 +203,12 @@ test "map advanced" {
 }
 
 test "nullable map advanced with finish" {
-	const B = BuilderAdvanced(flat.Builder(?[]const u8), flat.Builder(i32), true, void);
+	const B = BuilderAdvanced(flat.Builder([]const u8), flat.Builder(?i32), true, void);
 	const T = B.TupleType();
 	var b = try B.init(std.testing.allocator);
 
 	try b.append(T { "joe", 1 });
-	try b.appendSlice(&[_]T{ .{"blogs", 2}, .{null, 4} });
+	try b.appendSlice(&[_]T{ .{"blogs", 2}, .{"asdf", null} });
 	try b.appendEmpty();
 	try b.append(null);
 
@@ -220,7 +228,7 @@ pub fn Builder(comptime Tuple: type) type {
 	}
 	const KeyType = t.Struct.fields[0].type;
 	if (@typeInfo(KeyType) == .Optional) {
-		@compileError("key type '" ++ @typeName(KeyType) ++ "' cannot be nullable");
+		@compileError("map key type '" ++ @typeName(KeyType) ++ "' cannot be nullable");
 	}
 	const ValueType = t.Struct.fields[1].type;
 	const KeyBuilder = builder.Builder(KeyType);
@@ -247,14 +255,13 @@ test "finish" {
 	try b.append(null);
 	try b.append(.{ "hello", 1 });
 	try b.append(T{ "goodbye", 2 });
-	try b.append(T{ "arrow", 2 });
-	try b.append(T{ "map", null });
+	try b.appendSlice(&[_]T{ .{ "arrow", 2 }, .{ "map", null } });
 
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b11110), a.bufs[0][0]);
-	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 1, 2, 3, 4}, std.mem.bytesAsSlice(i32, a.bufs[1]));
+	try std.testing.expectEqual(@as(u8, 0b1110), a.bufs[0][0]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 1, 2, 4}, std.mem.bytesAsSlice(i32, a.bufs[1]));
 
 	const child = a.children[0];
 	// Child struct's key's values
