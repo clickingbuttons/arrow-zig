@@ -1,5 +1,6 @@
 // Map means store a single child type named entries with fields (key, value)
 // Useful for structures like [{"joe": 1}, {"blogs": 2, "foo": 4}, {}, null]
+// Undocumented in official spec :)
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");

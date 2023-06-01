@@ -1,7 +1,8 @@
-// Flat means no children. Includes Primitive and VariableBinary layouts.
+// Flat means no children. Includes Primitive, VariableBinary, and FixedBinary layouts.
 const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
+const abi = @import("../abi.zig");
 
 pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
 	const tag = tags.Tag.fromPrimitive(T, opts);
@@ -9,9 +10,13 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 	if (layout != .Primitive and layout != .VariableBinary) {
 		@compileError("unsupported flat type " ++ @typeName(T));
 	}
+	const is_fixed = tag == .FixedBinary;
+	const fixed_len = if (is_fixed) tag.FixedBinary.fixed_len else 0;
+	if (is_fixed and fixed_len < 1) {
+		@compileError(std.fmt.comptimePrint("expected fixed_len >= 1, got {d}", .{ fixed_len }));
+	}
 
 	const NullCount = if (@typeInfo(T) == .Optional) usize else void;
-	// TODO: does this need to be 64 byte aligned?
 	const ValidityList = if (@typeInfo(T) == .Optional) std.bit_set.DynamicBitSet else void;
 	const ValueType = tag.Primitive();
 
@@ -66,15 +71,27 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 					},
 					else => |t| @compileError("unsupported pointer type " ++ @tagName(t)),
 				},
+				.Array => |a| {
+					std.debug.assert(is_fixed);
+					if (a.len != fixed_len)
+						@compileError(std.fmt.comptimePrint(
+								"expected array of len {d} but got array of len {d}", .{ fixed_len, a.len }
+						));
+					try self.values.appendSlice(&value);
+				},
 				.Null => {
 					if (OffsetList != void) {
-						try self.offsets.append(self.offsets.items[self.offsets.items.len - 1]);
+						try self.offsets.append(self.offsets.getLast());
 					} else {
 						// > Array slots which are null are not required to have a particular value; any
 						// > "masked" memory can have any value and need not be zeroed, though implementations
 						// > frequently choose to zero memory for null items.
 						// PLEASE, for the sake of SIMD, 0 this
-						try self.appendAny(0);
+						if (comptime is_fixed) {
+							for (0..fixed_len) |_| try self.appendAny(0);
+						} else {
+							try self.appendAny(0);
+						}
 					}
 				},
 				.Optional => {
@@ -95,34 +112,46 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return self.appendAny(value);
 		}
 
+		fn makeBufs(self: *Self) ![3][]align(abi.BufferAlignment) u8 {
+			const allocator = self.values.allocator;
+			return switch (comptime layout) {
+				.Primitive => .{
+					if (ValidityList != void)
+						try array.validity(allocator, &self.validity, self.null_count)
+					else &.{},
+					std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
+					&.{},
+				},
+				.VariableBinary => .{
+					if (ValidityList != void)
+						try array.validity(allocator, &self.validity, self.null_count)
+					else &.{},
+					if (OffsetList != void)
+						std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
+					else &.{},
+					std.mem.sliceAsBytes(try self.values.toOwnedSlice()),
+				},
+				else => @compileError("should have checked layout earlier"),
+			};
+		}
+
+		fn len(self: *Self) usize {
+			if (OffsetList != void) return self.offsets.items.len - 1;
+			var res = self.values.items.len;
+			if (comptime is_fixed) res /= @intCast(usize, fixed_len);
+			return res;
+		}
+
 		pub fn finish(self: *Self) !*array.Array {
 			const allocator = self.values.allocator;
 			var res = try array.Array.init(allocator);
-
-			const length = if (OffsetList != void) self.offsets.items.len - 1 else self.values.items.len;
-			var bufs: [3][]align(array.BufferAlignment) u8 = .{
-				if (ValidityList != void)
-					try array.validity(allocator, &self.validity, self.null_count)
-				else &.{},
-				&.{},
-				&.{},
-			};
-			if (tag.abiLayout() == .Primitive) {
-				bufs[1] = std.mem.sliceAsBytes(try self.values.toOwnedSlice());
-			} else {
-				bufs[1] = if (OffsetList != void)
-					std.mem.sliceAsBytes(try self.offsets.toOwnedSlice())
-				else &.{};
-				bufs[2] = std.mem.sliceAsBytes(try self.values.toOwnedSlice());
-			}
-
 			res.* = .{
 				.tag = tag,
 				.name = @typeName(T) ++ " builder",
 				.allocator = allocator,
-				.length = length,
+				.length = self.len(),
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = bufs,
+				.bufs = try self.makeBufs(),
 				.children = &.{}
 			};
 			return res;
@@ -248,4 +277,18 @@ test "c abi" {
 	var s = try a.ownedSchema();
 	defer s.release.?(@constCast(&s));
 	try std.testing.expectEqualStrings(cname, s.name.?[0..cname.len]);
+}
+
+test "fixed binary finish" {
+	var b = try Builder(?[3]u8).init(std.testing.allocator);
+	try b.append(null);
+	const s = "hey";
+	try b.append(std.mem.sliceAsBytes(s)[0..s.len].*);
+
+	var a = try b.finish();
+	defer a.deinit();
+
+	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
+	try std.testing.expectEqualStrings("\x00" ** s.len ++ s, a.bufs[1]);
+	try std.testing.expectEqual(@as(usize, 0), a.bufs[2].len);
 }

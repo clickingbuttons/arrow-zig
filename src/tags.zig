@@ -172,8 +172,10 @@ pub const Tag = union(enum) {
 				},
 				else => @compileError("unsupported abi type " ++ @typeName(T))
 			},
-			.Struct => .{ .Struct = .{ .nullable = is_nullable } },
-			.Union => .{ .Union = .{ .nullable = is_nullable } },
+			.Array => |a| switch (a.child) {
+				u8, ?u8 => .{ .FixedBinary = .{ .nullable = is_nullable, .fixed_len = a.len } },
+				else => @compileError("unsupported array type " ++ @typeName(T))
+			},
 			else => @compileError("unsupported abi type " ++ @typeName(T)),
 		};
 	}
@@ -195,7 +197,7 @@ pub const Tag = union(enum) {
 				._32 => if (i.signed) i32 else u32,
 				._64 => if (i.signed) i64 else u64,
 			},
-			.Binary => u8,
+			.Binary, .FixedBinary => u8,
 			.Float => |f| switch (f.bit_width) {
 				._16 => f16,
 				._32 => f32,

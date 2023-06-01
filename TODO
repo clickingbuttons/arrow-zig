@@ -50,5 +50,5 @@
 	- wait for https://github.com/ziglang/zig/issues/15678
 - [x] map type
 - [x] fixed width binary type
-	- [ ] add flat builder support
+	- [x] add flat builder support
 - [ ] c array import

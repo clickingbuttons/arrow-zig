@@ -5,16 +5,27 @@ const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
 pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
+	const tag: tags.Tag = if (fixed_len == 0)
+		.{ .List = opts }
+	else .{
+		.FixedList = .{
+			.nullable = opts.nullable,
+			.fixed_len = @intCast(i16, fixed_len),
+			.large = opts.large
+		}
+	};
+	const is_fixed = tag == .FixedList;
+
 	const NullCount = if (opts.nullable) usize else void;
 	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
 
 	const OffsetType = if (opts.large) i64 else i32;
-	const OffsetList = if (fixed_len == 0) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
+	const OffsetList = if (!is_fixed) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
 
 	const ChildAppendType = ChildBuilder.Type();
 	const AppendType = switch (opts.nullable) {
-		true => if (fixed_len > 0) ?[fixed_len]ChildAppendType else ?[]const ChildAppendType,
-		false => if (fixed_len > 0) [fixed_len]ChildAppendType else []const ChildAppendType,
+		true => if (is_fixed) ?[fixed_len]ChildAppendType else ?[]const ChildAppendType,
+		false => if (is_fixed) [fixed_len]ChildAppendType else []const ChildAppendType,
 	};
 
 	return struct {
@@ -55,8 +66,11 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 					if (OffsetList != void) {
 						try self.offsets.append(self.offsets.getLast());
 					} else {
-						for (0..fixed_len) |_| {
-							try self.child.append(0);
+						const to_append = if (comptime @typeInfo(ChildAppendType) == .Optional) null else 0;
+						if (comptime is_fixed) {
+							for (0..fixed_len) |_| try self.child.append(to_append);
+						} else {
+							try self.child.append(to_append);
 						}
 					}
 				},
@@ -71,18 +85,15 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 				},
 				.Pointer => |p| switch (p.size) {
 					.Slice => {
-						for (value) |v| {
-							try self.child.append(v);
-						}
+						if (tag != .List) @compileError("cannot append slice to non-list type");
+						for (value) |v| try self.child.append(v);
 						try self.offsets.append(@intCast(OffsetType, self.child.values.items.len));
 					},
 					else => |t| @compileError("unsupported pointer type " ++ @tagName(t)),
 				},
 				.Array => |a| {
 					std.debug.assert(a.len == fixed_len);
-					for (value) |v| {
-						try self.child.append(v);
-					}
+					for (value) |v| try self.child.append(v);
 				},
 				else => |t| @compileError("unsupported append type " ++ @tagName(t))
 			};
@@ -93,10 +104,10 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 		}
 
 		fn len(self: *Self) usize {
-			if (OffsetList != void) {
-				return self.offsets.items.len - 1;
-			}
-			return self.child.values.items.len / @intCast(usize, fixed_len);
+			if (OffsetList != void) return self.offsets.items.len - 1;
+			var res = self.child.values.items.len;
+			if (comptime is_fixed) res /= @intCast(usize, fixed_len);
+			return res;
 		}
 
 		pub fn finish(self: *Self) !*array.Array {
@@ -104,13 +115,6 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			const allocator = self.child.values.allocator;
 			const children = try allocator.alloc(*array.Array, 1);
 			children[0] = try self.child.finish();
-			const tag = if (fixed_len == 0)
-					tags.Tag{ .List = opts }
-				else tags.Tag { .FixedList = .{
-					.nullable = opts.nullable,
-					.fixed_len = @intCast(i16, fixed_len),
-					.large = opts.large
-				} };
 
 			var res = try array.Array.init(allocator);
 			res.* = .{
@@ -139,11 +143,12 @@ pub fn Builder(comptime Slice: type) type {
 	const nullable = @typeInfo(Slice) == .Optional;
 	const Child = if (nullable) @typeInfo(Slice).Optional.child else Slice;
 	const t = @typeInfo(Child);
-	if (!(t == .Pointer and t.Pointer.size == .Slice)) {
-		@compileError(@typeName(Slice) ++ " is not a slice type");
+	if (!(t == .Pointer and t.Pointer.size == .Slice) and t != .Array) {
+		@compileError(@typeName(Slice) ++ " is not a slice or array type");
 	}
-	const ChildBuilder = builder.Builder(t.Pointer.child);
-	return BuilderAdvanced(ChildBuilder, .{ .nullable = nullable, .large = false }, 0);
+	const arr_len = if (t == .Array) t.Array.len else 0;
+	const ChildBuilder = builder.Builder(if (t == .Pointer) t.Pointer.child else t.Array.child);
+	return BuilderAdvanced(ChildBuilder, .{ .nullable = nullable, .large = false }, arr_len);
 }
 
 test "init + deinit optional child and parent" {
@@ -185,4 +190,27 @@ test "abi" {
 	defer c.release.?(&c);
 	var s = try a.ownedSchema();
 	defer s.release.?(&s);
+}
+
+test "fixed" {
+	var b = try Builder([3]?i8).init(std.testing.allocator);
+	defer b.deinit();
+
+	try b.append([_]?i8{1,null,3});
+}
+
+test "fixed finish" {
+	var b = try Builder(?[3]?i8).init(std.testing.allocator);
+	try b.append([_]?i8{1,2,3});
+	try b.append(null);
+	try b.append([_]?i8{4,null,6});
+
+	const a = try b.finish();
+	defer a.deinit();
+
+	try std.testing.expectEqual(@as(usize, 3), a.length);
+	try std.testing.expectEqual(@as(usize, 1), a.null_count);
+	try std.testing.expectEqual(@as(u8, 0b101), a.bufs[0][0]);
+	try std.testing.expectEqual(@as(usize, 0), a.bufs[1].len); // No offsets
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 0, 0, 0 }, a.children[0].bufs[1][0..6]);
 }

@@ -66,6 +66,7 @@ expected = {
 	"g": [None, 3, 1],
 	"h": [None, 3, 4],
 	"i": [None, [(3, 6)], [( 4, 7 )]],
+	"j": [None, b'\x03\x06', b'\x04\x07'],
 }
 
 code = 0
@@ -75,10 +76,11 @@ for k in expected.keys():
 		code = 1
 		print("column", k, "expected", expected[k], "got", actual)
 
-sys.exit(code)
 
-# reader = tb.to_reader()
-# with pa.OSFile("example.arrow", "wb") as sink:
-# 	with pa.ipc.new_file(sink, schema=reader.schema) as writer:
-# 		for batch in reader:
-# 			writer.write(batch)
+reader = tb.to_reader()
+with pa.OSFile("example.arrow", "wb") as sink:
+	with pa.ipc.new_file(sink, schema=reader.schema) as writer:
+		for batch in reader:
+			writer.write(batch)
+
+sys.exit(code)

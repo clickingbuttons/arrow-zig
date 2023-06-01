@@ -31,6 +31,7 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .nullable = true, .dense = false }, void),
 		h: dict.Builder(?u32),
 		i: map.Builder(?struct{ i8, ?i64, }),
+		j: builder.Builder(?[2]u8),
 	};
 	var b = try struct_.BuilderAdvanced(T, true, void).init(allocator);
 	{
@@ -48,6 +49,7 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 			.g = .{ .i = 3 },
 			.h = 3,
 			.i = .{ 3, 6 },
+			.j = [_]u8{ 3, 6 },
 		});
 		try b.append(.{
 			.a = "goodbye",
@@ -59,6 +61,7 @@ pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
 			.g = .{ .f = 1 },
 			.h = 4,
 			.i = .{ 4, 7 },
+			.j = [_]u8{ 4, 7 },
 		});
 	}
 
@@ -97,7 +100,7 @@ fn testArray(arr: *array.Array, expected_n_nodes: usize, expected_n_bufs: usize)
 test "array abi layout" {
 	const arr = try sampleArray(std.testing.allocator);
 	defer arr.deinit();
-	try std.testing.expectEqual(@as(usize, 9), arr.children.len);
+	try std.testing.expectEqual(@as(usize, 10), arr.children.len);
 
 	// Tested against pyarrow
 	try testArray(arr.children[0], 1, 3); // 1, 3
@@ -109,4 +112,5 @@ test "array abi layout" {
 	try testArray(arr.children[6], 3, 5); // 15, 28
 	try testArray(arr.children[7], 1, 2); // 16, 30
 	try testArray(arr.children[8], 4, 7); // 20, 37
+	try testArray(arr.children[9], 1, 2); // 21, 39
 }

@@ -25,7 +25,6 @@ test {
 	_ = @import("./array/array.zig");
 	_ = @import("./array/flat.zig");
 	_ = @import("./array/list.zig");
-	_ = @import("./array/list_fixed.zig");
 	_ = @import("./array/struct.zig");
 	_ = @import("./array/union.zig");
 	_ = @import("./array/dict.zig");
