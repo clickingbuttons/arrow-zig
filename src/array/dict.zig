@@ -5,6 +5,7 @@ const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
+const Array = array.Array;
 const log = std.log.scoped(.arrow);
 
 pub const BuilderError = error {
@@ -23,7 +24,7 @@ pub fn BuilderAdvanced(
 	comptime opts: DictOptions,
 ) type {
 	const IndexType = opts.index.Type();
-	const IndexList = std.ArrayListAligned(IndexType, array.BufferAlignment);
+	const IndexList = std.ArrayListAligned(IndexType, Array.buffer_alignment);
 
 	const AppendType = ChildBuilder.Type();
 	const HashMap = std.HashMap(AppendType, IndexType, Context, opts.max_load_percentage);
@@ -79,12 +80,12 @@ pub fn BuilderAdvanced(
 			return BuilderError.InvalidIndexType;
 		}
 
-		fn shrinkIndexTo(self: *Self, comptime target_type: type) ![]align(array.BufferAlignment) u8 {
+		fn shrinkIndexTo(self: *Self, comptime target_type: type) !Array.Buffer {
 			const indices = if (target_type == opts.index.Type())
 				try self.indices.toOwnedSlice()
 			else brk: {
 				const allocator = self.indices.allocator;
-				var res = try std.ArrayListAligned(target_type, array.BufferAlignment).initCapacity(allocator, self.indices.items.len);
+				var res = try std.ArrayListAligned(target_type, Array.buffer_alignment).initCapacity(allocator, self.indices.items.len);
 				defer res.deinit();
 				for (self.indices.items) |index| {
 					res.appendAssumeCapacity(@intCast(target_type, index));
@@ -96,7 +97,7 @@ pub fn BuilderAdvanced(
 			return std.mem.sliceAsBytes(indices);
 		}
 
-		fn shrinkIndex(self: *Self, index: tags.DictOptions.Index) ![]align(array.BufferAlignment)u8 {
+		fn shrinkIndex(self: *Self, index: tags.DictOptions.Index) !Array.Buffer {
 			return switch (index) {
 				.i8 => try self.shrinkIndexTo(i8),
 				.i16 => try self.shrinkIndexTo(i16),
@@ -104,22 +105,22 @@ pub fn BuilderAdvanced(
 			};
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			const allocator = self.hashmap.allocator;
-			const children = try allocator.alloc(*array.Array, 1);
+			const children = try allocator.alloc(*Array, 1);
 			const length = self.indices.items.len;
 			const shrunk_index = try self.shrunkIndexType();
 			children[0] = try self.child.finish();
 			children[0].name = "dict values";
 			self.hashmap.deinit();
-			var res = try array.Array.init(allocator);
+			var res = try Array.init(allocator);
 			res.* = .{
 				.tag = tags.Tag{ .Dictionary = .{ .index = shrunk_index } },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
 				.length = length,
 				.null_count = 0,
-				.bufs = .{
+				.buffers = .{
 					&.{},
 					try self.shrinkIndex(shrunk_index),
 					&.{},
@@ -128,13 +129,13 @@ pub fn BuilderAdvanced(
 			};
 			if (children[0].tag.abiLayout().hasValidity()) {
 				res.*.null_count = children[0].null_count;
-				res.*.bufs[0] = children[0].bufs[0];
+				res.*.buffers[0] = children[0].buffers[0];
 				// Since the validity array is hoisted up into the dictionary, I think that the child
 				// should have nullable set to false. However, pyarrow thinks differently so let's be
 				// compatible.
 				// children[0].tag.setNullable(false);
 				children[0].null_count = 0;
-				children[0].bufs[0] = &.{};
+				children[0].buffers[0] = &.{};
 			}
 			return res;
 		}
@@ -250,9 +251,9 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	const offsets = std.mem.bytesAsSlice(i8, a.bufs[1]);
+	const offsets = std.mem.bytesAsSlice(i8, a.buffers[1]);
 	try std.testing.expectEqualSlices(i8, &[_]i8{ 0, 1 }, offsets);
-	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1 }, a.children[0].bufs[1][0..2]);
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1 }, a.children[0].buffers[1][0..2]);
 	try std.testing.expectEqual(child_tag, a.children[0].tag);
 }
 

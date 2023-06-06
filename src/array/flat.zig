@@ -2,6 +2,7 @@
 const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
+const Array = array.Array;
 
 pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
 	const tag = tags.Tag.fromPrimitive(T, opts);
@@ -20,8 +21,8 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 	const ValueType = tag.Primitive();
 
 	const OffsetType = if (opts.large) i64 else i32;
-	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
-	const ValueList = std.ArrayListAligned(ValueType, array.BufferAlignment);
+	const OffsetList = if (layout.hasOffsets()) std.ArrayListAligned(OffsetType, Array.buffer_alignment) else void;
+	const ValueList = std.ArrayListAligned(ValueType, Array.buffer_alignment);
 
 	return struct {
 		const Self = @This();
@@ -111,7 +112,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return self.appendAny(value);
 		}
 
-		fn makeBufs(self: *Self) ![3][]align(array.BufferAlignment) u8 {
+		fn makeBufs(self: *Self) !Array.Buffers {
 			const allocator = self.values.allocator;
 			return switch (comptime layout) {
 				.Primitive => .{
@@ -141,16 +142,16 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return res;
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			const allocator = self.values.allocator;
-			var res = try array.Array.init(allocator);
+			var res = try Array.init(allocator);
 			res.* = .{
 				.tag = tag,
 				.name = @typeName(T) ++ " builder",
 				.allocator = allocator,
 				.length = self.len(),
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = try self.makeBufs(),
+				.buffers = try self.makeBufs(),
 				.children = &.{}
 			};
 			return res;
@@ -193,10 +194,10 @@ test "primitive finish" {
 	var a = try b.finish();
 	defer a.deinit();
 
-	const masks = a.bufs[0];
+	const masks = a.buffers[0];
 	try std.testing.expectEqual(@as(u8, 0b1101), masks[0]);
 
-	const values = std.mem.bytesAsSlice(T, a.bufs[1]);
+	const values = std.mem.bytesAsSlice(T, a.buffers[1]);
 	try std.testing.expectEqualSlices(T, &[_]T{ 1, 0, 2, 4 }, values);
 
 	const tag = tags.Tag{
@@ -242,10 +243,11 @@ test "varbinary finish" {
 	var a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
-	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	const buffers = a.buffers;
+	try std.testing.expectEqual(@as(u8, 0b10), buffers[0][0]);
+	const offsets = std.mem.bytesAsSlice(i32, buffers[1]);
 	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, s.len}, offsets);
-	try std.testing.expectEqualStrings(s, a.bufs[2][0..s.len]);
+	try std.testing.expectEqualStrings(s, buffers[2][0..s.len]);
 }
 
 test "fixed binary finish" {
@@ -257,7 +259,8 @@ test "fixed binary finish" {
 	var a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
-	try std.testing.expectEqualStrings("\x00" ** s.len ++ s, a.bufs[1]);
-	try std.testing.expectEqual(@as(usize, 0), a.bufs[2].len);
+	const buffers = a.buffers;
+	try std.testing.expectEqual(@as(u8, 0b10), buffers[0][0]);
+	try std.testing.expectEqualStrings("\x00" ** s.len ++ s, buffers[1]);
+	try std.testing.expectEqual(@as(usize, 0), buffers[2].len);
 }

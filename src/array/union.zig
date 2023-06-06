@@ -1,7 +1,7 @@
 // Sparse + dense unions. Prefer dense.
 const std = @import("std");
 const tags = @import("../tags.zig");
-const array = @import("./array.zig");
+const Array = @import("./array.zig").Array;
 const builder = @import("./builder.zig");
 
 // Per spec
@@ -56,8 +56,8 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type
 
 pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.UnionOptions, comptime UnionType: type) type {
 	const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.nullable);
-	const TypeList = std.ArrayListAligned(TypeId, array.BufferAlignment);
-	const OffsetList = if (opts.dense) std.ArrayListAligned(i32, array.BufferAlignment) else void;
+	const TypeList = std.ArrayListAligned(TypeId, Array.buffer_alignment);
+	const OffsetList = if (opts.dense) std.ArrayListAligned(i32, Array.buffer_alignment) else void;
 
 	return struct {
 		const Self = @This();
@@ -141,20 +141,20 @@ pub fn BuilderAdvanced(comptime ChildrenBuilders: type, comptime opts: tags.Unio
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			const fields = @typeInfo(ChildrenBuilders).Struct.fields;
-			const children = try self.allocator.alloc(*array.Array, fields.len);
+			const children = try self.allocator.alloc(*Array, fields.len);
 			inline for (fields, 0..) |f, i| {
 				children[i] = try @field(self.children, f.name).finish();
 			}
-			var res = try array.Array.init(self.allocator);
+			var res = try Array.init(self.allocator);
 			res.* = .{
 				.tag = tags.Tag{ .Union = opts },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = self.types.items.len,
 				.null_count = 0,
-				.bufs = .{
+				.buffers = .{
 					std.mem.sliceAsBytes(try self.types.toOwnedSlice()),
 					if (OffsetList != void) std.mem.sliceAsBytes(try self.offsets.toOwnedSlice()) else &.{},
 					&.{},
@@ -196,10 +196,10 @@ test "nullable dense union advanced with finish" {
 	var a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 1 }, a.bufs[0]);
-	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 1 }, a.buffers[0]);
+	const offsets = std.mem.bytesAsSlice(i32, a.buffers[1]);
 	try std.testing.expectEqualSlices(i32, &[_]i32{ 0, 1, 2, 0 }, offsets);
-	try std.testing.expectEqual(@as(u8, 0b0101), a.children[0].bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b0101), a.children[0].buffers[0][0]);
 	try std.testing.expectEqual(@as(usize, 0), a.children[1].null_count);
 }
 
@@ -223,11 +223,11 @@ test "nullable sparse union advanced with finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b0100010), a.children[0].bufs[0][0]);
-	try std.testing.expectEqual(@as(u8, 0b0010100), a.children[1].bufs[0][0]);
-	try std.testing.expectEqual(@as(u8, 0b1001000), a.children[2].bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b0100010), a.children[0].buffers[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b0010100), a.children[1].buffers[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b1001000), a.children[2].buffers[0][0]);
 
-	try std.testing.expectEqualSlices(u8, &[_]u8{0, 0, 1, 2, 1, 0, 2 }, a.bufs[0]);
+	try std.testing.expectEqualSlices(u8, &[_]u8{0, 0, 1, 2, 1, 0, 2 }, a.buffers[0]);
 }
 
 fn MakeChildrenBuilders(comptime Union: type, comptime nullable: bool) type {

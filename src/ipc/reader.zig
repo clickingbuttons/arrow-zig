@@ -7,16 +7,13 @@ const record_batch = @import("./gen/RecordBatch.fb.zig");
 const dictionary_batch = @import("./gen/DictionaryBatch.fb.zig");
 const DictionaryEncoding = @import("./gen/DictionaryEncoding.fb.zig").DictionaryEncodingT;
 const BodyCompression = @import("./gen/BodyCompression.fb.zig").BodyCompressionT;
-const array_mod = @import("../array/array.zig");
+const Array = @import("../array/array.zig").Array;
 const field_mod = @import("./gen/Field.fb.zig");
 const FieldNode = @import("./gen/FieldNode.fb.zig").FieldNodeT;
 const FieldType = @import("./gen/Type.fb.zig").TypeT;
 const tags = @import("../tags.zig");
 
 const Allocator = std.mem.Allocator;
-const Array = array_mod.Array;
-const BufferAlignment = array_mod.BufferAlignment;
-const BufferT = []align(BufferAlignment) u8;
 // We always have to read the entire schema, record batch, and dictionary headers from flatbuffers.
 // For this reason we unpack to these nice types to avoid writing `.?` on non-int property accesses.
 const Schema = schema_mod.SchemaT;
@@ -25,6 +22,7 @@ const DictionaryBatch = dictionary_batch.DictionaryBatchT;
 const Field = field_mod.FieldT;
 const Footer = footer_mod.FooterT;
 
+const buffer_alignment = Array.buffer_alignment;
 const magic = "ARROW1";
 const MessageLen = i32;
 const continuation = @bitCast(MessageLen, @as(u32, 0xffffffff));
@@ -378,7 +376,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 		fn readMessageBody(self: *Self, size: i64) ![]u8 {
 			const real_size = @intCast(usize, size);
-			const res = try self.arena.allocator().alignedAlloc(u8, BufferAlignment, real_size);
+			const res = try self.arena.allocator().alignedAlloc(u8, buffer_alignment, real_size);
 			const n_read = try self.source.reader().read(res);
 			if (n_read != res.len) {
 				log.err("record batch ended early", .{});
@@ -407,7 +405,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 		fn readField(
 			self: *Self,
-			buffers: []BufferT,
+			buffers: []Array.Buffer,
 			nodes: []FieldNode,
 			field: Field
 		) !*Array {
@@ -422,13 +420,12 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 				.allocator = allocator,
 				.length = @intCast(usize, nodes[self.node_index].length),
 				.null_count = @intCast(usize, nodes[self.node_index].null_count),
-				.bufs = .{ &.{}, &.{}, &.{} },
 				.children = try allocator.alloc(*Array, field.children.items.len),
 			};
 			self.node_index += 1;
 
 			for (0..res.tag.abiLayout().nBuffers()) |i| {
-				res.bufs[i] = buffers[self.buffer_index];
+				res.buffers[i] = buffers[self.buffer_index];
 				self.buffer_index += 1;
 			}
 
@@ -446,15 +443,15 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 						.allocator = allocator,
 						.length = v.length,
 						.null_count = v.null_count,
-						.bufs = .{
-							try allocator.alignedAlloc(u8, BufferAlignment, v.buf0.items.len),
-							try allocator.alignedAlloc(u8, BufferAlignment, v.buf1.items.len),
+						.buffers = .{
+							try allocator.alignedAlloc(u8, buffer_alignment, v.buf0.items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.buf1.items.len),
 							&.{}
 						},
 						.children = &.{},
 					};
-					@memcpy(dict_values.bufs[0], v.buf0.items);
-					@memcpy(dict_values.bufs[1], v.buf1.items);
+					@memcpy(dict_values.buffers[0], v.buf0.items);
+					@memcpy(dict_values.buffers[1], v.buf1.items);
 					res.children = try allocator.alloc(*Array, 1);
 					res.children[0] = dict_values;
 				} else {
@@ -464,11 +461,9 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 			return res;
 		}
 
-		fn readBuffer(self: *Self, allocator: Allocator, size: usize, compression: ?*BodyCompression) !BufferT {
+		fn readBuffer(self: *Self, allocator: Allocator, size: usize, compression: ?*BodyCompression) !Array.Buffer {
 			// Undocumented, but whatever :)
-			if (size == 0) {
-				return try allocator.alignedAlloc(u8, BufferAlignment, 0);
-			}
+			if (size == 0) return try allocator.alignedAlloc(u8, buffer_alignment, 0);
 			// > Each constituent buffer is first compressed with the indicated
 			// > compressor, and then written with the uncompressed length in the first 8
 			// > bytes as a 64-bit little-endian signed integer followed by the compressed
@@ -480,7 +475,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 					const res = try self.source.reader().readIntLittle(i64);
 					break :brk if (res == -1) size else @intCast(usize, res);
 				} else size;
-			var res = try allocator.alignedAlloc(u8, BufferAlignment, uncompressed_size);
+			var res = try allocator.alignedAlloc(u8, buffer_alignment, uncompressed_size);
 			errdefer allocator.free(res);
 			var n_read: ?usize = null;
 
@@ -508,9 +503,9 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 			return res;
 		}
 
-		fn readBuffers(self: *Self, allocator: Allocator, batch: RecordBatch, body_len: i64) ![]BufferT {
+		fn readBuffers(self: *Self, allocator: Allocator, batch: RecordBatch, body_len: i64) ![]Array.Buffer {
 			var i: usize = 0;
-			var buffers = try allocator.alloc(BufferT, batch.buffers.items.len);
+			var buffers = try allocator.alloc(Array.Buffer, batch.buffers.items.len);
 			errdefer {
 				for (0..i) |j| {
 					allocator.free(buffers[j]);
@@ -571,7 +566,6 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 				.allocator = allocator,
 				.length = @intCast(usize, batch.length),
 				.null_count = 0,
-				.bufs = .{ &.{}, &.{}, &.{} },
 				.children = children,
 			};
 			return res;
@@ -811,13 +805,9 @@ fn testEquals(arr1: *Array, arr2: *Array) !void {
 	try std.testing.expectEqualStrings(arr1.name, arr2.name);
 	try std.testing.expectEqual(arr1.length, arr2.length);
 	try std.testing.expectEqual(arr1.null_count, arr2.null_count);
-	for (0..arr1.bufs.len) |i| {
-		try std.testing.expectEqualSlices(u8, arr1.bufs[i], arr2.bufs[i]);
-	}
+	for (0..arr1.buffers.len) |i| try std.testing.expectEqualSlices(u8, arr1.buffers[i], arr2.buffers[i]);
 	try std.testing.expectEqual(arr1.children.len, arr2.children.len);
-	for (0..arr1.children.len) |i| {
-		try testEquals(arr1.children[i], arr2.children[i]);
-	}
+	for (0..arr1.children.len) |i| try testEquals(arr1.children[i], arr2.children[i]);
 }
 
 test "example file path" {

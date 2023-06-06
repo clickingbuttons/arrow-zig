@@ -4,6 +4,8 @@ const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
+const Array = array.Array;
+
 pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOptions, comptime fixed_len: i32) type {
 	const tag: tags.Tag = if (fixed_len == 0)
 		.{ .List = opts }
@@ -20,7 +22,7 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
 
 	const OffsetType = if (opts.large) i64 else i32;
-	const OffsetList = if (!is_fixed) std.ArrayListAligned(OffsetType, array.BufferAlignment) else void;
+	const OffsetList = if (!is_fixed) std.ArrayListAligned(OffsetType, Array.buffer_alignment) else void;
 
 	const ChildAppendType = ChildBuilder.Type();
 	const AppendType = switch (opts.nullable) {
@@ -110,20 +112,20 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 			return res;
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			const length = self.len();
 			const allocator = self.child.values.allocator;
-			const children = try allocator.alloc(*array.Array, 1);
+			const children = try allocator.alloc(*Array, 1);
 			children[0] = try self.child.finish();
 
-			var res = try array.Array.init(allocator);
+			var res = try Array.init(allocator);
 			res.* = .{
 				.tag = tag,
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
 				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = .{
+				.buffers = .{
 					if (ValidityList != void)
 						try array.validity(allocator, &self.validity, self.null_count)
 					else &.{},
@@ -174,8 +176,8 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
-	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
+	try std.testing.expectEqual(@as(u8, 0b10), a.buffers[0][0]);
+	const offsets = std.mem.bytesAsSlice(i32, a.buffers[1]);
 	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 3}, offsets);
 }
 
@@ -197,7 +199,7 @@ test "fixed finish" {
 
 	try std.testing.expectEqual(@as(usize, 3), a.length);
 	try std.testing.expectEqual(@as(usize, 1), a.null_count);
-	try std.testing.expectEqual(@as(u8, 0b101), a.bufs[0][0]);
-	try std.testing.expectEqual(@as(usize, 0), a.bufs[1].len); // No offsets
-	try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 0, 0, 0 }, a.children[0].bufs[1][0..6]);
+	try std.testing.expectEqual(@as(u8, 0b101), a.buffers[0][0]);
+	try std.testing.expectEqual(@as(usize, 0), a.buffers[1].len); // No offsets
+	try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3, 0, 0, 0 }, a.children[0].buffers[1][0..6]);
 }

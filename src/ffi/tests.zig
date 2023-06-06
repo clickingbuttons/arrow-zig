@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi.zig");
+const null_array = @import("../array/array.zig").null_array;
 const Builder = @import("../array/builder.zig").Builder;
 const BuilderAdvanced = @import("../array/union.zig").BuilderAdvanced;
 const ImportedArray = @import("./import.zig").ImportedArray;
@@ -102,6 +103,18 @@ test "nullable dense union export" {
 	try std.testing.expectEqualStrings("+ud:0,1\x00", s.format[0..8]);
 }
 
+test "null array export" {
+	var n = null_array;
+	var c = try abi.Array.init(&n);
+	defer c.release.?(&c);
+	try std.testing.expectEqual(@as(i64, 0), c.null_count);
+
+	var s = try abi.Schema.init(&n);
+	defer s.release.?(&s);
+	try std.testing.expectEqualStrings("n\x00", s.format[0..2]);
+	try std.testing.expectEqual(@as(i64, 0), s.n_children);
+}
+
 test "flat import" {
 	std.testing.log_level = .debug;
 	const allocator = std.testing.allocator;
@@ -118,7 +131,7 @@ test "flat import" {
 	defer imported.deinit();
 
 	const a2 = imported.array;
-	try std.testing.expectEqual(@as(u8, 0b10), a2.bufs[0][0]);
-	try std.testing.expectEqualStrings("\x00" ** s.len ++ s, a2.bufs[1]);
-	try std.testing.expectEqual(@as(usize, 0), a2.bufs[2].len);
+	try std.testing.expectEqual(@as(u8, 0b10), a2.buffers[0][0]);
+	try std.testing.expectEqualStrings("\x00" ** s.len ++ s, a2.buffers[1]);
+	try std.testing.expectEqual(@as(usize, 0), a2.buffers[2].len);
 }

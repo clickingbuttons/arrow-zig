@@ -116,9 +116,9 @@ const ArrayLayout = enum {
 
 pub const Array = extern struct {
 	const Self = @This();
-	pub const BufferAlignment = 64;
-	pub const BufferPtr = ?[*]align(BufferAlignment) const u8;
-	pub const BufferPtrs = ?[*]BufferPtr;
+	pub const buffer_alignment = array_mod.Array.buffer_alignment;
+	pub const Buffer = ?[*]align(buffer_alignment) const u8;
+	pub const Buffers = ?[*]Buffer;
 	pub const Layout = ArrayLayout;
 
 	length: i64 = 0,
@@ -126,7 +126,7 @@ pub const Array = extern struct {
 	offset: i64 = 0,
 	n_buffers: i64,
 	n_children: i64 = 0,
-	buffers: BufferPtrs = null, // Managed
+	buffers: Buffers = null, // Managed
 	children: ?[*]*Array = null, // Managed
 	dictionary: ?*Array = null, // Managed
 	release: ?*const fn (*Array) callconv(.C) void = null,

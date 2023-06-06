@@ -5,9 +5,6 @@ const Array = @import("../array/array.zig").Array;
 
 const log = std.log.scoped(.arrow);
 const Allocator = std.mem.Allocator;
-const BufferAlignment = abi.Array.BufferAlignment;
-const BufferPtrs = abi.Array.BufferPtrs;
-const BufferPtr = abi.Array.BufferPtr;
 
 const ImportError = error {
 	TooManyBuffers,
@@ -18,7 +15,6 @@ const ImportError = error {
 
 pub const ImportedArray = struct {
 	const Self = @This();
-	const Bufs = Array.Bufs;
 
 	array: *Array,
 
@@ -27,12 +23,12 @@ pub const ImportedArray = struct {
 	abi_schema: abi.Schema,
 	abi_arr: abi.Array,
 
-	fn importBuf(buffers: std.meta.Child(BufferPtrs), index: usize, len: usize) ![]align(BufferAlignment) u8 {
+	fn importBuf(buffers: [*]abi.Array.Buffer, index: usize, len: usize) !Array.Buffer {
 		if (buffers[index]) |buf| return @constCast(buf[0..len]);
 		return ImportError.NullBuffer;
 	}
 
-	fn importBufs(arr: abi.Array, tag: tags.Tag, arr_len: usize) !Bufs {
+	fn importBufs(arr: abi.Array, tag: tags.Tag, arr_len: usize) !Array.Buffers {
 		const abi_layout = tag.abiLayout();
 		const n_buffers = abi_layout.nBuffers();
 		const actual_buffers = @intCast(usize, arr.n_buffers);
@@ -41,7 +37,7 @@ pub const ImportedArray = struct {
 			return ImportError.BufferLenMismatch;
 		}
 
-		var res = Bufs{ &.{}, &.{}, &.{} };
+		var res = Array.Buffers { &.{}, &.{}, &.{} };
 		if (n_buffers == 0) return res;
 
 		if (arr.buffers == null) {
@@ -96,7 +92,7 @@ pub const ImportedArray = struct {
 		const tag = try tags.Tag.fromAbiFormat(format, schema.flags.nullable, schema.dictionary != null);
 
 		const arr_len = @intCast(usize, arr.length);
-		const bufs = try importBufs(arr, tag, arr_len);
+		const buffers = try importBufs(arr, tag, arr_len);
 
 		if (arr.n_children != schema.n_children) return ImportError.SchemaLenMismatch;
 		const n_children = @intCast(usize, arr.n_children);
@@ -112,7 +108,7 @@ pub const ImportedArray = struct {
 			.allocator = allocator,
 			.length = arr_len,
 			.null_count = @intCast(usize, arr.null_count),
-			.bufs = bufs,
+			.buffers = buffers,
 			.children = children,
 		};
 

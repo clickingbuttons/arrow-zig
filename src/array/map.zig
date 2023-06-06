@@ -6,6 +6,7 @@ const array = @import("./array.zig");
 const tags = @import("../tags.zig");
 const builder = @import("./builder.zig");
 
+const Array = array.Array;
 const Allocator = std.mem.Allocator;
 
 fn MakeTupleType(comptime KeyType: type, comptime ValueType: type) type {
@@ -45,7 +46,7 @@ pub fn BuilderAdvanced(
 ) type {
 	const NullCount = if (nullable) usize else void;
 	const ValidityList = if (nullable) std.bit_set.DynamicBitSet else void;
-	const OffsetList = std.ArrayListAligned(i32, array.BufferAlignment);
+	const OffsetList = std.ArrayListAligned(i32, Array.buffer_alignment);
 
 	const KeyType = KeyBuilder.Type();
 	const ValueType = ValueBuilder.Type();
@@ -132,49 +133,44 @@ pub fn BuilderAdvanced(
 			try self.offsets.append(self.offsets.getLast());
 		}
 
-		fn makeStruct(self: *Self) !*array.Array {
+		fn makeStruct(self: *Self) !*Array {
 			const allocator = self.allocator;
 
-			const children = try allocator.alloc(*array.Array, 2);
+			const children = try allocator.alloc(*Array, 2);
 			children[0] = try self.key_builder.finish();
 			children[0].name = "key";
 			children[1] = try self.value_builder.finish();
 			children[1].name = "value";
 
-			var res = try array.Array.init(self.allocator);
+			var res = try Array.init(self.allocator);
 			res.* = .{
 				.tag = tags.Tag{ .Struct = .{ .nullable = false } },
 				.name = "entries",
 				.allocator = self.allocator,
 				.length = self.offsets.items.len - 1 - self.null_count,
 				.null_count = 0,
-				.bufs = .{
-					&.{},
-					&.{},
-					&.{},
-				},
 				.children = children,
 			};
 			return res;
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			// > A map<string, float64> array has format string +m; its single child has name entries and
 			// > format string +s; its two grandchildren have names key and value, and format strings u
 			// > and g respectively.
 			const allocator = self.allocator;
 
-			const children = try allocator.alloc(*array.Array, 1);
+			const children = try allocator.alloc(*Array, 1);
 			children[0] = try self.makeStruct();
 
-			var res = try array.Array.init(self.allocator);
+			var res = try Array.init(self.allocator);
 			res.* = .{
 				.tag = tags.Tag{ .Map = .{ .nullable = nullable } },
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = self.allocator,
 				.length = self.offsets.items.len - 1,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = .{
+				.buffers = .{
 					if (ValidityList != void)
 						try array.validity(self.allocator, &self.validity, self.null_count)
 					else &.{},
@@ -216,8 +212,9 @@ test "nullable map advanced with finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b0111), a.bufs[0][0]);
-	try std.testing.expectEqualSlices(i32, &[_]i32{0, 1, 3, 3, 3}, std.mem.bytesAsSlice(i32, a.bufs[1]));
+	const buffers = a.buffers;
+	try std.testing.expectEqual(@as(u8, 0b0111), buffers[0][0]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{0, 1, 3, 3, 3}, std.mem.bytesAsSlice(i32, buffers[1]));
 }
 
 pub fn Builder(comptime Tuple: type) type {
@@ -261,14 +258,15 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b1110), a.bufs[0][0]);
-	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 1, 2, 4}, std.mem.bytesAsSlice(i32, a.bufs[1]));
+	var buffers = a.buffers;
+	try std.testing.expectEqual(@as(u8, 0b1110), buffers[0][0]);
+	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 1, 2, 4}, std.mem.bytesAsSlice(i32, buffers[1]));
 
 	const child = a.children[0];
 	// Child struct's key's values
-	try std.testing.expectEqualStrings("hellogoodbyearrowmap", child.children[0].bufs[2]);
+	try std.testing.expectEqualStrings("hellogoodbyearrowmap", child.children[0].buffers[2]);
 	// Child struct's values' validity
-	try std.testing.expectEqual(@as(u8, 0b0111), child.children[1].bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b0111), child.children[1].buffers[0][0]);
 	// Child struct's values' values
-	try std.testing.expectEqualSlices(V, &[_]V{1,2,2,0}, std.mem.bytesAsSlice(V, child.children[1].bufs[1]));
+	try std.testing.expectEqualSlices(V, &[_]V{1,2,2,0}, std.mem.bytesAsSlice(V, child.children[1].buffers[1]));
 }

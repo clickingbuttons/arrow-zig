@@ -5,6 +5,8 @@ const array = @import("./array.zig");
 const flat = @import("./flat.zig");
 const builder = @import("./builder.zig");
 
+const Array = array.Array;
+
 fn MakeStructType(comptime ChildrenBuilders: type, comptime nullable: bool) type {
 	const t = @typeInfo(ChildrenBuilders).Struct;
  	var fields: [t.fields.len]std.builtin.Type.StructField = undefined;
@@ -116,9 +118,9 @@ pub fn BuilderAdvanced(
 			return self.appendAny(value);
 		}
 
-		pub fn finish(self: *Self) !*array.Array {
+		pub fn finish(self: *Self) !*Array {
 			const fields = @typeInfo(ChildrenBuilders).Struct.fields;
-			const children = try self.allocator.alloc(*array.Array, fields.len);
+			const children = try self.allocator.alloc(*Array, fields.len);
 			inline for (fields, 0..) |f, i| {
 				children[i] = try @field(self.children, f.name).finish();
 				children[i].name = f.name;
@@ -130,7 +132,7 @@ pub fn BuilderAdvanced(
 				.allocator = self.allocator,
 				.length = children[0].length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = .{
+				.buffers = .{
 					if (ValidityList != void)
 						try array.validity(self.allocator, &self.validity, self.null_count)
 					else &.{},
@@ -174,8 +176,8 @@ test "nullable struct advanced with finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b110), a.bufs[0][0]);
-	try std.testing.expectEqual(@as(u8, 0b010), a.children[1].bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b110), a.buffers[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b010), a.children[1].buffers[0][0]);
 }
 
 fn MakeChildrenBuilders(comptime Struct: type, comptime nullable: bool) type {
@@ -243,5 +245,5 @@ test "finish" {
 	const a = try b.finish();
 	defer a.deinit();
 
-	try std.testing.expectEqual(@as(u8, 0b110), a.bufs[0][0]);
+	try std.testing.expectEqual(@as(u8, 0b110), a.buffers[0][0]);
 }
