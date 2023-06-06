@@ -1,0 +1,137 @@
+const std = @import("std");
+const abi = @import("abi.zig");
+const tags = @import("../tags.zig");
+const Array = @import("../array/array.zig").Array;
+
+const log = std.log.scoped(.arrow);
+const Allocator = std.mem.Allocator;
+const BufferAlignment = abi.Array.BufferAlignment;
+const BufferPtrs = abi.Array.BufferPtrs;
+const BufferPtr = abi.Array.BufferPtr;
+
+const ImportError = error {
+	TooManyBuffers,
+	SchemaLenMismatch,
+	BufferLenMismatch,
+	NullBuffer,
+};
+
+pub const ImportedArray = struct {
+	const Self = @This();
+	const Bufs = Array.Bufs;
+
+	array: *Array,
+
+	// We have to store this arr and schema for our whole lifetime so we can call their release functions.
+	// The alternative is to copy the schema and array data out but that's slower for large arrays
+	abi_schema: abi.Schema,
+	abi_arr: abi.Array,
+
+	fn importBuf(buffers: std.meta.Child(BufferPtrs), index: usize, len: usize) ![]align(BufferAlignment) u8 {
+		if (buffers[index]) |buf| return @constCast(buf[0..len]);
+		return ImportError.NullBuffer;
+	}
+
+	fn importBufs(arr: abi.Array, tag: tags.Tag, arr_len: usize) !Bufs {
+		const abi_layout = tag.abiLayout();
+		const n_buffers = abi_layout.nBuffers();
+		const actual_buffers = @intCast(usize, arr.n_buffers);
+		if (n_buffers != actual_buffers) {
+			log.err("expected {d} buffers for tag {any}, got {d}", .{ n_buffers, tag, actual_buffers });
+			return ImportError.BufferLenMismatch;
+		}
+
+		var res = Bufs{ &.{}, &.{}, &.{} };
+		if (n_buffers == 0) return res;
+
+		if (arr.buffers == null) {
+			log.err("expected {d} buffers for tag {any} but buffer list is null", .{ n_buffers, tag });
+			return ImportError.BufferLenMismatch;
+		}
+
+		const arr_buffers = arr.buffers.?;
+		var validity_len = arr_len / 8;
+		if (arr_len % 8 > 0) validity_len += 1;
+
+		switch (abi_layout) {
+			.Primitive => {
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+				res[1] = try importBuf(arr_buffers, 1, arr_len * tag.size());
+			},
+			.VariableBinary => {
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+				res[1] = try importBuf(arr_buffers, 1, arr_len * tag.offsetSize());
+				res[2] = try importBuf(arr_buffers, 2, arr_len * tag.size());
+			},
+			.List => {
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+				res[1] = try importBuf(arr_buffers, 1, arr_len * tag.offsetSize());
+			},
+			.FixedList, .Struct => {
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+			},
+			.SparseUnion => {
+				res[0] = try importBuf(arr_buffers, 0, arr_len);
+			},
+			.DenseUnion => {
+				res[0] = try importBuf(arr_buffers, 0, arr_len);
+				res[1] = try importBuf(arr_buffers, 1, arr_len * tag.offsetSize());
+			},
+			.Null => {},
+			.Dictionary => {
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+				res[1] = try importBuf(arr_buffers, 0, arr_len * tag.size());
+			},
+			.Map => { // Undocumented :)
+				res[0] = try importBuf(arr_buffers, 0, validity_len);
+				res[1] = try importBuf(arr_buffers, 0, arr_len * @sizeOf(i32));
+			},
+		}
+
+		return res;
+	}
+
+	fn initArray(allocator: Allocator, arr: abi.Array, schema: abi.Schema) !*Array {
+		const format = std.mem.span(schema.format);
+		const tag = try tags.Tag.fromAbiFormat(format, schema.flags.nullable, schema.dictionary != null);
+
+		const arr_len = @intCast(usize, arr.length);
+		const bufs = try importBufs(arr, tag, arr_len);
+
+		if (arr.n_children != schema.n_children) return ImportError.SchemaLenMismatch;
+		const n_children = @intCast(usize, arr.n_children);
+		var children = try allocator.alloc(*Array, n_children);
+		for (0..n_children) |i| {
+			children[i] = try initArray(allocator, arr.children.?[i].*, schema.children.?[i].*);
+		}
+
+		var res = try allocator.create(Array);
+		res.* = .{
+			.tag = tag,
+			.name = if (schema.name) |n| std.mem.span(n) else "imported array",
+			.allocator = allocator,
+			.length = arr_len,
+			.null_count = @intCast(usize, arr.null_count),
+			.bufs = bufs,
+			.children = children,
+		};
+
+		return res;
+	}
+
+	pub fn init(allocator: Allocator, arr: abi.Array, schema: abi.Schema) !Self {
+		return .{
+			.array = try initArray(allocator, arr, schema),
+			.abi_schema = schema,
+			.abi_arr = arr,
+		};
+	}
+
+	pub fn deinit(self: *Self) void {
+		const allocator = self.array.allocator;
+		if (self.abi_schema.release) |r| r(&self.abi_schema);
+		if (self.abi_arr.release) |r| r(&self.abi_arr);
+		allocator.destroy(self.array);
+	}
+};
+

@@ -1,7 +1,6 @@
 const std = @import("std");
-const abi = @import("./abi.zig");
-const array = @import("./array/array.zig");
-const sample = @import("./sample.zig");
+const abi = @import("ffi/abi.zig");
+const sample = @import("sample.zig");
 
 fn sampleRecordBatch2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *abi.Schema) !void {
 	var a = try sample.sampleArray(allocator);
@@ -9,8 +8,8 @@ fn sampleRecordBatch2(allocator: std.mem.Allocator, out_array: *abi.Array, out_s
 		errdefer a.deinit();
 
 		try a.toRecordBatch("table 1");
-		out_array.* = try a.toOwnedAbi();
-		out_schema.* = try a.ownedSchema();
+		out_array.* = try abi.Array.init(a);
+		out_schema.* = try abi.Schema.init(a);
 	}
 }
 
@@ -20,17 +19,18 @@ export fn sampleRecordBatch(out_array: *abi.Array, out_schema: *abi.Schema) call
 }
 
 test {
-	_ = @import("./abi.zig");
-	_ = @import("./tags.zig");
-	_ = @import("./array/array.zig");
-	_ = @import("./array/flat.zig");
-	_ = @import("./array/list.zig");
-	_ = @import("./array/struct.zig");
-	_ = @import("./array/union.zig");
-	_ = @import("./array/dict.zig");
-	_ = @import("./array/map.zig");
-	_ = @import("./sample.zig");
-	_ = @import("./ipc/reader.zig");
+	_ = @import("ffi/abi.zig");
+	_ = @import("ffi/tests.zig");
+	_ = @import("tags.zig");
+	_ = @import("array/array.zig");
+	_ = @import("array/flat.zig");
+	_ = @import("array/list.zig");
+	_ = @import("array/struct.zig");
+	_ = @import("array/union.zig");
+	_ = @import("array/dict.zig");
+	_ = @import("array/map.zig");
+	_ = @import("sample.zig");
+	_ = @import("ipc/reader.zig");
 }
 
 test "abi doesn't leak" {

@@ -123,7 +123,7 @@ pub fn BuilderAdvanced(comptime ChildBuilder: type, comptime opts: tags.ListOpti
 				.allocator = allocator,
 				.length = length,
 				.null_count = if (NullCount != void) self.null_count else 0,
-				.bufs = .{ 
+				.bufs = .{
 					if (ValidityList != void)
 						try array.validity(allocator, &self.validity, self.null_count)
 					else &.{},
@@ -177,19 +177,6 @@ test "finish" {
 	try std.testing.expectEqual(@as(u8, 0b10), a.bufs[0][0]);
 	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
 	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, 3}, offsets);
-}
-
-test "abi" {
-	var b = try Builder(?[]const i8).init(std.testing.allocator);
-	try b.append(null);
-	try b.append(&[_]i8{1,2,3});
-
-	const a = try b.finish();
-
-	var c = try a.toOwnedAbi();
-	defer c.release.?(&c);
-	var s = try a.ownedSchema();
-	defer s.release.?(&s);
 }
 
 test "fixed" {

@@ -12,7 +12,6 @@ const field_mod = @import("./gen/Field.fb.zig");
 const FieldNode = @import("./gen/FieldNode.fb.zig").FieldNodeT;
 const FieldType = @import("./gen/Type.fb.zig").TypeT;
 const tags = @import("../tags.zig");
-const abi = @import("../abi.zig");
 
 const Allocator = std.mem.Allocator;
 const Array = array_mod.Array;
@@ -379,7 +378,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 		fn readMessageBody(self: *Self, size: i64) ![]u8 {
 			const real_size = @intCast(usize, size);
-			const res = try self.arena.allocator().alignedAlloc(u8, abi.BufferAlignment, real_size);
+			const res = try self.arena.allocator().alignedAlloc(u8, BufferAlignment, real_size);
 			const n_read = try self.source.reader().read(res);
 			if (n_read != res.len) {
 				log.err("record batch ended early", .{});
@@ -599,8 +598,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 			log.debug("read_dict {d}", .{ dict.id });
 			const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
-			const n_expected = comptime abi.Array.Layout.Dictionary.nBuffers();
-			std.debug.assert(n_expected == 2);
+			const n_expected = 2;
 			const n_actual = batch.buffers.items.len;
 			if (n_expected != n_actual) {
 				log.warn("expected dictionary data to have {d} buffers, got {d}", .{ n_expected, n_actual });

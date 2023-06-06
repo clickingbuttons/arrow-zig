@@ -2,7 +2,6 @@
 const std = @import("std");
 const tags = @import("../tags.zig");
 const array = @import("./array.zig");
-const abi = @import("../abi.zig");
 
 pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
 	const tag = tags.Tag.fromPrimitive(T, opts);
@@ -112,7 +111,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			return self.appendAny(value);
 		}
 
-		fn makeBufs(self: *Self) ![3][]align(abi.BufferAlignment) u8 {
+		fn makeBufs(self: *Self) ![3][]align(array.BufferAlignment) u8 {
 			const allocator = self.values.allocator;
 			return switch (comptime layout) {
 				.Primitive => .{
@@ -247,36 +246,6 @@ test "varbinary finish" {
 	const offsets = std.mem.bytesAsSlice(i32, a.bufs[1]);
 	try std.testing.expectEqualSlices(i32, &[_]i32{0, 0, s.len}, offsets);
 	try std.testing.expectEqualStrings(s, a.bufs[2][0..s.len]);
-}
-
-test "c abi" {
-	var b = try Builder(?[]const u8).init(std.testing.allocator);
-	try b.append(null);
-	try b.append("hello");
-
-	var a = try b.finish();
-	var c = try a.toOwnedAbi();
-	defer c.release.?(@constCast(&c));
-
-	const buf0 = @constCast(c.buffers.?[0].?);
-	try std.testing.expectEqual(@as(u8, 0b10), @ptrCast([*]u8, buf0)[0]);
-	try std.testing.expectEqual(@as(i64, 1), c.null_count);
-
-	const buf1 = @constCast(c.buffers.?[1].?);
-	const offsets = @ptrCast([*]i32, @alignCast(@alignOf(i32), buf1));
-	try std.testing.expectEqual(@as(i32, 0), offsets[0]);
-	try std.testing.expectEqual(@as(i32, 0), offsets[1]);
-	try std.testing.expectEqual(@as(i32, 5), offsets[2]);
-
-	const buf2 = @constCast(c.buffers.?[2].?);
-	const values = @ptrCast([*]u8, buf2);
-	try std.testing.expectEqualStrings("hello", values[0..5]);
-
-	var cname = "c1";
-	a.name = cname;
-	var s = try a.ownedSchema();
-	defer s.release.?(@constCast(&s));
-	try std.testing.expectEqualStrings(cname, s.name.?[0..cname.len]);
 }
 
 test "fixed binary finish" {

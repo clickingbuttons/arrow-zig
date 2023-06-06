@@ -245,25 +245,3 @@ test "finish" {
 
 	try std.testing.expectEqual(@as(u8, 0b110), a.bufs[0][0]);
 }
-
-test "c abi" {
-	const T = struct {
-		val: ?i32,
-	};
-	var b = try Builder(?T).init(std.testing.allocator);
-
-	try b.append(null);
-	try b.append(.{ .val = 1 });
-	try b.append(T{ .val = 2 });
-	try b.append(T{ .val = null });
-
-	var a = try b.finish();
-	var c = try a.toOwnedAbi();
-	defer c.release.?(&c);
-
-	var cname = "table 1";
-	a.name = cname;
-	var s = try a.ownedSchema();
-	defer s.release.?(&s);
-	try std.testing.expectEqualStrings(cname, s.name.?[0..cname.len]);
-}
