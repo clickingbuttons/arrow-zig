@@ -466,6 +466,7 @@ pub const Tag = union(enum) {
 						}
 					},
 					'm' => return .{ .Map = .{ .nullable = is_nullable } },
+					's' => return .{ .Struct = .{ .nullable = is_nullable } },
 					else => {},
 				}
 			},
