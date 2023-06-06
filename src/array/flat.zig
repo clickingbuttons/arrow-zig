@@ -47,9 +47,7 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
 			// > the offsets buffer contains length + 1 signed integers (either 32-bit or 64-bit,
 			// > depending on the logical type), which encode the start position of each slot in the data
 			// > buffer.
-			if (OffsetList != void) {
-				try res.offsets.append(0);
-			}
+			if (OffsetList != void) try res.offsets.append(0);
 
 			return res;
 		}

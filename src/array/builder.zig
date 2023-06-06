@@ -4,6 +4,7 @@ const list = @import("./list.zig");
 const struct_ = @import("./struct.zig");
 const union_ = @import("./union.zig");
 const dict = @import("./dict.zig");
+const map = @import("./map.zig");
 
 fn Builder2(comptime ctx: type, comptime T: type) type {
 	return switch (@typeInfo(ctx)) {
@@ -20,7 +21,7 @@ fn Builder2(comptime ctx: type, comptime T: type) type {
 			else => list.Builder(T),
 		},
 		.Optional => |o| Builder2(o.child, T),
-		.Struct => struct_.Builder(T),
+		.Struct => |s| if (s.is_tuple) map.Builder(T) else struct_.Builder(T),
 		.Union => union_.Builder(T),
 		else => @compileError("unsupported builder type " ++ @typeName(T))
 	};

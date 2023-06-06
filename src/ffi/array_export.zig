@@ -19,7 +19,7 @@ pub fn buffers(array: *Array, n_buffers: usize) !Buffers {
 }
 
 pub fn children(array: *Array, n_children: usize) Allocator.Error!?[*]*abi.Array {
-	if (n_children == 0) return null;
+	if (array.children.len == 0) return null;
 
 	const res = try array.allocator.alloc(*abi.Array, n_children);
 	for (0..n_children) |j| {

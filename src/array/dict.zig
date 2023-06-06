@@ -127,12 +127,13 @@ pub fn BuilderAdvanced(
 				},
 				.children = children,
 			};
+			// > The null count of such arrays is dictated only by the validity bitmap of its indices,
+			// > irrespective of any null values in the dictionary.
 			if (children[0].tag.abiLayout().hasValidity()) {
 				res.*.null_count = children[0].null_count;
 				res.*.buffers[0] = children[0].buffers[0];
-				// Since the validity array is hoisted up into the dictionary, I think that the child
-				// should have nullable set to false. However, pyarrow thinks differently so let's be
-				// compatible.
+				// I think that the child should have nullable set to false. However, pyarrow thinks
+				// differently so let's be compatible.
 				// children[0].tag.setNullable(false);
 				children[0].null_count = 0;
 				children[0].buffers[0] = &.{};

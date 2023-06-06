@@ -3,7 +3,7 @@ const abi = @import("ffi/abi.zig");
 const sample = @import("sample.zig");
 
 fn sampleRecordBatch2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *abi.Schema) !void {
-	var a = try sample.sampleArray(allocator);
+	var a = try sample.all(allocator);
 	{
 		errdefer a.deinit();
 
@@ -41,7 +41,7 @@ test "abi doesn't leak" {
 	defer schema.release.?(&schema);
 
 	{
-		const sampleArr = try sample.sampleArray(std.testing.allocator);
+		const sampleArr = try sample.all(std.testing.allocator);
 		defer sampleArr.deinit();
 		try std.testing.expectEqual(@intCast(i64, sampleArr.children.len), schema.n_children);
 	}

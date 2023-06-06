@@ -21,10 +21,10 @@ class ArrowArray(Structure):
 	pass
 ArrowArray._fields_ = [
 	('length', c_int64),
-	('null_count', c_int64), 
-	('offset', c_int64), 
-	('n_buffers', c_int64), 
-	('n_children', c_int64), 
+	('null_count', c_int64),
+	('offset', c_int64),
+	('n_buffers', c_int64),
+	('n_children', c_int64),
 	('buffers', POINTER(c_void_p)),
 	('children', POINTER(POINTER(ArrowArray))),
 	('dictionary', POINTER(ArrowArray)),
@@ -57,16 +57,16 @@ tb = pa.Table.from_batches([rb])
 tb.validate(full=True)
 
 expected = {
-	"a": [None, "hello", "goodbye"],
-	"b": [None, 1, 2],
-	"c": [None, [3,4], [5,6]],
-	"d": [None, [3,4], [5,6]],
-	"e": [None, { "a": 3, "b": 6}, { "a": 4, "b": 7 }],
-	"f": [None, 3, 4],
-	"g": [None, 3, 1],
-	"h": [None, 3, 4],
-	"i": [None, [(3, 6)], [( 4, 7 )]],
-	"j": [None, b'\x03\x06', b'\x04\x07'],
+	"a": [None, 32, 33, 34],
+	"b": [None, [1, 2, 3], [4, 5, 6], [7, 8, 9]],
+	"c": [None, b'hello', b'friend', b'goodbye'],
+	"d": [None, [1, 2, 3], [4, 5, 6], [7, 8, 9]],
+	"e": [None, [1, 2, 3], [4, 5, 6], [7, 8, 9]],
+	"f": [None, {'a': 1, 'b': 1}, {'a': 2, 'b': 4}, {'a': None, 'b': 9}],
+	"g": [None, 1.0, 3.0, 5],
+	"h": [None, 1.0, 3.0, 5],
+	"i": [None, b'hello', b'there', b'friend'],
+	"j": [None, [(b'hello', 1)], [(b'arrow', 2), (b'map', None)], [(b'goodbye', 3)]],
 }
 
 code = 0
@@ -78,7 +78,7 @@ for k in expected.keys():
 
 
 reader = tb.to_reader()
-with pa.OSFile("example.arrow", "wb") as sink:
+with pa.OSFile("sample.arrow", "wb") as sink:
 	with pa.ipc.new_file(sink, schema=reader.schema) as writer:
 		for batch in reader:
 			writer.write(batch)

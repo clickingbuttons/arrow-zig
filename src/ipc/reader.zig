@@ -297,12 +297,10 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 		const Dictionaries = std.AutoHashMap(i64, struct {
 			length: usize,
 			null_count: usize,
-			buf0: std.ArrayList(u8),
-			buf1: std.ArrayList(u8),
+			bufs: [3]std.ArrayList(u8),
 
 			pub fn deinit(self: @This()) void {
-				self.buf0.deinit();
-				self.buf1.deinit();
+				for (0..self.bufs.len) |i| self.bufs[i].deinit();
 			}
 		});
 
@@ -365,6 +363,7 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 			const allocator = self.arena.allocator();
 			var message_buf = try allocator.alloc(u8, message_len);
+			errdefer allocator.free(message_buf);
 			const n_read = try self.source.reader().read(message_buf);
 			if (n_read != message_buf.len) {
 				return IpcError.InvalidLen;
@@ -444,14 +443,15 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 						.length = v.length,
 						.null_count = v.null_count,
 						.buffers = .{
-							try allocator.alignedAlloc(u8, buffer_alignment, v.buf0.items.len),
-							try allocator.alignedAlloc(u8, buffer_alignment, v.buf1.items.len),
-							&.{}
+							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[0].items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[1].items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[2].items.len),
 						},
 						.children = &.{},
 					};
-					@memcpy(dict_values.buffers[0], v.buf0.items);
-					@memcpy(dict_values.buffers[1], v.buf1.items);
+					@memcpy(dict_values.buffers[0], v.bufs[0].items);
+					@memcpy(dict_values.buffers[1], v.bufs[1].items);
+					@memcpy(dict_values.buffers[2], v.bufs[2].items);
 					res.children = try allocator.alloc(*Array, 1);
 					res.children[0] = dict_values;
 				} else {
@@ -583,19 +583,18 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 		}
 
 		fn readDict(self: *Self, dict: DictionaryBatch, body_len: i64) !void {
-			// We own the dictionaries due to any message being able to update them. The values are copied
-			// out into arrays.
-			// A maybe better alternative is adding reference counting support to Array. However, that will
-			// result in previous record batches referencing that dictionary being mutated which I'd argue
-			// is unexpected behavior.
+			// We own the dictionaries due to any message being able to update them. The values are
+			// copied out into arrays.
+			// An alternative is adding reference counting support to Array. However, that will result in
+			// previous record batches referencing that dictionary being mutated which I'd argue is BAD
+			// behavior.
 			const allocator = self.arena.allocator();
 
 			log.debug("read_dict {d}", .{ dict.id });
 			const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
-			const n_expected = 2;
 			const n_actual = batch.buffers.items.len;
-			if (n_expected != n_actual) {
-				log.warn("expected dictionary data to have {d} buffers, got {d}", .{ n_expected, n_actual });
+			if (n_actual != 2 and n_actual != 3) {
+				log.warn("expected dictionary data to have 2 or 3 buffers, got {d}", .{ n_actual });
 				return IpcError.InvalidNumDictionaryBuffers;
 			}
 			const node = batch.nodes.items[0];
@@ -604,22 +603,21 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 			if (dict.isDelta) {
 				if (self.dictionaries.getPtr(dict.id)) |existing| {
-					try existing.buf0.appendSlice(buffers[0]);
-					try existing.buf1.appendSlice(buffers[1]);
+					for (0..n_actual) |i| try existing.bufs[i].appendSlice(buffers[i]);
 				} else {
 					log.warn("ignoring delta for non-existant dictionary {d}", .{ dict.id });
 				}
 			} else {
-				var buf0 = std.ArrayList(u8).init(allocator);
-				var buf1 = std.ArrayList(u8).init(allocator);
-				try buf0.appendSlice(buffers[0]);
-				try buf1.appendSlice(buffers[1]);
+				var bufs: [3]std.ArrayList(u8) = undefined;
+				for (0..bufs.len) |i| {
+					bufs[i] = std.ArrayList(u8).init(allocator);
+					try bufs[i].appendSlice(buffers[i]);
+				}
 
 				if (try self.dictionaries.fetchPut(dict.id, .{
 						.length = @intCast(usize, node.length),
 						.null_count = @intCast(usize, node.null_count),
-						.buf0 = buf0,
-						.buf1 = buf1,
+						.bufs = bufs,
 					})) |existing| {
 					log.warn("spec does not support replacing dictionary for dictionary {d}", .{ dict.id });
 					existing.value.deinit();
@@ -810,12 +808,12 @@ fn testEquals(arr1: *Array, arr2: *Array) !void {
 	for (0..arr1.children.len) |i| try testEquals(arr1.children[i], arr2.children[i]);
 }
 
-test "example file path" {
+test "sample file" {
 	std.testing.log_level = .debug;
-	var ipc_reader = try recordBatchFileReader(std.testing.allocator, "./example.arrow");
+	var ipc_reader = try recordBatchFileReader(std.testing.allocator, "./sample.arrow");
 	defer ipc_reader.deinit();
 
-	const expected = try sample.sampleArray(std.testing.allocator);
+	const expected = try sample.all(std.testing.allocator);
 	try expected.toRecordBatch("record batch");
 	defer expected.deinit();
 	try std.testing.expectEqual(expected.children.len, ipc_reader.reader.schema.fields.items.len);
@@ -830,7 +828,6 @@ test "example file path" {
 }
 
 test "tickers file" {
-	std.testing.log_level = .debug;
 	var ipc_reader = try recordBatchFileReader(std.testing.allocator, "./tickers.arrow");
 	defer ipc_reader.deinit();
 

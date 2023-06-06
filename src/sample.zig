@@ -1,74 +1,169 @@
 // A sample array with every data type.
 const std = @import("std");
-const array = @import("./array/array.zig");
-const builder = @import("./array/builder.zig");
-const flat = @import("./array/flat.zig");
-const struct_ = @import("./array/struct.zig");
-const dict = @import("./array/dict.zig");
-const union_ = @import("./array/union.zig");
-const map = @import("./array/map.zig");
+const tags = @import("./tags.zig");
+const Array = @import("./array/array.zig").Array;
+const Builder = @import("./array/builder.zig").Builder;
+const FlatBuilder = @import("./array/flat.zig").BuilderAdvanced;
+const StructBuilder = @import("./array/struct.zig").BuilderAdvanced;
+const UnionBuilder = @import("./array/union.zig").BuilderAdvanced;
+const DictBuilder = @import("./array/dict.zig").Builder;
+const MapBuilder = @import("./array/map.zig").Builder;
 
-pub fn sampleArray(allocator: std.mem.Allocator) !*array.Array {
-	const StructT = struct {
-		a: ?i32,
-		b: ?i8,
-	};
-	const UnionT = union(enum) {
-		a: ?i32,
-		b: ?i8,
-	};
-	const UnionChildrenBuilders = struct {
-		i: flat.Builder(?i32),
-		f: flat.Builder(?f32),
-	};
-	const T = struct {
-		a: flat.BuilderAdvanced(?[]const u8, .{ .large = false, .utf8 = true }),
-		b: builder.Builder(?i32),
-		c: builder.Builder(?[]i32),
-		d: builder.Builder(?[2]i32),
-		e: builder.Builder(?StructT),
-		f: builder.Builder(?UnionT),
-		g: union_.BuilderAdvanced(UnionChildrenBuilders, .{ .nullable = true, .dense = false }, void),
-		h: dict.Builder(?u32),
-		i: map.Builder(?struct{ i8, ?i64, }),
-		j: builder.Builder(?[2]u8),
-	};
-	var b = try struct_.BuilderAdvanced(T, true, void).init(allocator);
-	{
-		errdefer b.deinit();
+const Allocator = std.mem.Allocator;
 
-		// Keep synched with integration_test.py
-		try b.append(null);
-		try b.append(.{
-			.a = "hello",
-			.b = 1,
-			.c = &[_]i32{3,4},
-			.d = [_]i32{3,4},
-			.e = StructT{ .a = 3, .b = 6 },
-			.f = UnionT{ .a = 3 },
-			.g = .{ .i = 3 },
-			.h = 3,
-			.i = .{ 3, 6 },
-			.j = [_]u8{ 3, 6 },
-		});
-		try b.append(.{
-			.a = "goodbye",
-			.b = 2,
-			.c = &[_]i32{5,6},
-			.d = [_]i32{5,6},
-			.e = .{ .a = 4, .b = 7 },
-			.f = .{ .b = 4 },
-			.g = .{ .f = 1 },
-			.h = 4,
-			.i = .{ 4, 7 },
-			.j = [_]u8{ 4, 7 },
-		});
-	}
-
-	return b.finish();
+// A bunch of arrays that have length 4.
+pub fn flat(allocator: Allocator) !*Array {
+	var b = try Builder(?i16).init(allocator);
+	try b.append(null);
+	try b.append(32);
+	try b.append(33);
+	try b.append(34);
+	return try b.finish();
 }
 
-fn nBuffers(arr: *array.Array) usize {
+pub fn fixedFlat(allocator: Allocator) !*Array {
+	var b = try Builder(?[3]u8).init(allocator);
+	try b.append(null);
+	const s1 = "hey";
+	try b.append(std.mem.sliceAsBytes(s1)[0..s1.len].*);
+	const s2 = "guy";
+	try b.append(std.mem.sliceAsBytes(s2)[0..s2.len].*);
+	const s3 = "bye";
+	try b.append(std.mem.sliceAsBytes(s3)[0..s3.len].*);
+	return try b.finish();
+}
+
+pub fn variableFlat(allocator: Allocator) !*Array {
+	var b = try Builder(?[]const u8).init(allocator);
+	try b.append(null);
+	try b.append("hello");
+	try b.append("friend");
+	try b.append("goodbye");
+	return try b.finish();
+}
+
+pub fn list(allocator: Allocator) !*Array {
+	const T = i16;
+	var b = try Builder(?[]const T).init(allocator);
+	try b.append(null);
+	try b.append(&[_]T{1, 2, 3});
+	try b.append(&[_]T{4, 5, 6});
+	try b.append(&[_]T{7, 8, 9});
+	return try b.finish();
+}
+
+pub fn fixedList(allocator: Allocator) !*Array {
+	const T = i16;
+	var b = try Builder(?[3]T).init(allocator);
+	try b.append(null);
+	try b.append([_]T{1, 2, 3});
+	try b.append([_]T{4, 5, 6});
+	try b.append([_]T{7, 8, 9});
+	return try b.finish();
+}
+
+pub fn struct_(allocator: Allocator) !*Array {
+	const T = struct {
+		a: ?i32,
+		b: ?u64,
+	};
+	var b = try Builder(?T).init(allocator);
+	try b.append(null);
+	try b.append(.{ .a = 1, .b = 1 });
+	try b.append(.{ .a = 2, .b = 4 });
+	try b.append(T{ .a = null, .b = 9 });
+	return try b.finish();
+}
+
+pub fn denseUnion(allocator: Allocator) !*Array {
+	const T = union(enum) {
+		f: ?f32,
+		i: ?i32,
+	};
+	var b = try Builder(?T).init(allocator);
+	try b.append(null);
+	try b.append(.{ .f = 1 });
+	try b.append(.{ .f = 3 });
+	try b.append(.{ .i = 5 });
+	return try b.finish();
+}
+
+pub fn sparseUnion(allocator: Allocator) !*Array {
+	const ChildrenBuilders = struct {
+		f: Builder(?f32),
+		i: Builder(?i32),
+	};
+	var b = try UnionBuilder(ChildrenBuilders, .{ .nullable = true, .dense = false }, void).init(allocator);
+	try b.append(null);
+	try b.append(.{ .f = 1 });
+	try b.append(.{ .f = 3 });
+	try b.append(.{ .i = 5 });
+	return try b.finish();
+}
+
+pub fn dict(allocator: Allocator) !*Array {
+	var b = try DictBuilder(?[]const u8).init(allocator);
+	try b.append(null);
+	try b.append("hello");
+	try b.append("there");
+	try b.append("friend");
+	return try b.finish();
+}
+
+pub fn map(allocator: Allocator) !*Array {
+	const V = i32;
+	const T = struct { []const u8, ?V };
+	var b = try MapBuilder(?T).init(allocator);
+	try b.append(null);
+	try b.append(.{ "hello", 1 });
+	try b.appendSlice(&[_]T{ .{ "arrow", 2 }, .{ "map", null } });
+	try b.append(T{ "goodbye", 3 });
+	return try b.finish();
+}
+
+pub fn all(allocator: Allocator) !*Array {
+	const arr_children = [_]*Array {
+		try flat(allocator),
+		try fixedList(allocator),
+		try variableFlat(allocator),
+		try list(allocator),
+		try fixedList(allocator),
+		try struct_(allocator),
+		try denseUnion(allocator),
+		try sparseUnion(allocator),
+		try dict(allocator),
+		try map(allocator),
+	};
+	const length = arr_children[0].length;
+	inline for (0..arr_children.len) |i| {
+		std.debug.assert(arr_children[i].length == length);
+		arr_children[i].name = std.fmt.comptimePrint("{c}", .{ @intCast(u8, 'a' + i) });
+	}
+
+	var children = try allocator.alloc(*Array, arr_children.len);
+	for (0..arr_children.len) |i| children[i] = arr_children[i];
+
+	var validity = try allocator.alignedAlloc(u8, Array.buffer_alignment, 1);
+	validity[0] = 0b1110;
+
+	var res = try Array.init(allocator);
+	res.* = .{
+		.tag = tags.Tag{ .Struct = .{ .nullable = true } },
+		.name = "sample dataframe",
+		.allocator = allocator,
+		.length = length,
+		.null_count = 1,
+		.buffers = .{
+			validity,
+			&.{},
+			&.{},
+		},
+		.children = children,
+	};
+	return res;
+}
+
+fn nBuffers(arr: *Array) usize {
 	var res: usize = 0;
 	// std.debug.print("tag {any} bufs {d}\n", .{ arr.tag, arr.tag.abiLayout().nBuffers() });
 	res += arr.tag.abiLayout().nBuffers();
@@ -80,7 +175,7 @@ fn nBuffers(arr: *array.Array) usize {
 	return res;
 }
 
-fn nNodes(arr: *array.Array) usize {
+fn nNodes(arr: *Array) usize {
 	var res: usize = 0;
 	res += 1;
 	for (arr.children) |c| {
@@ -92,25 +187,25 @@ fn nNodes(arr: *array.Array) usize {
 	return res;
 }
 
-fn testArray(arr: *array.Array, expected_n_nodes: usize, expected_n_bufs: usize) !void {
+fn testArray(arr: *Array, expected_n_nodes: usize, expected_n_bufs: usize) !void {
 	try std.testing.expectEqual(expected_n_nodes, nNodes(arr));
 	try std.testing.expectEqual(expected_n_bufs, nBuffers(arr));
 }
 
 test "array abi layout" {
-	const arr = try sampleArray(std.testing.allocator);
+	const arr = try all(std.testing.allocator);
 	defer arr.deinit();
 	try std.testing.expectEqual(@as(usize, 10), arr.children.len);
 
 	// Tested against pyarrow
-	try testArray(arr.children[0], 1, 3); // 1, 3
-	try testArray(arr.children[1], 1, 2); // 2, 5
-	try testArray(arr.children[2], 2, 4); // 4, 9
-	try testArray(arr.children[3], 2, 3); // 6, 12
-	try testArray(arr.children[4], 3, 5); // 9, 17
-	try testArray(arr.children[5], 3, 6); // 12, 23
-	try testArray(arr.children[6], 3, 5); // 15, 28
-	try testArray(arr.children[7], 1, 2); // 16, 30
-	try testArray(arr.children[8], 4, 7); // 20, 37
-	try testArray(arr.children[9], 1, 2); // 21, 39
+	try testArray(arr.children[0], 1, 2);
+	try testArray(arr.children[1], 2, 3);
+	try testArray(arr.children[2], 1, 3);
+	try testArray(arr.children[3], 2, 4);
+	try testArray(arr.children[4], 2, 3);
+	try testArray(arr.children[5], 3, 5);
+	try testArray(arr.children[6], 3, 6);
+	try testArray(arr.children[7], 3, 5);
+	try testArray(arr.children[8], 1, 2);
+	try testArray(arr.children[9], 4, 8);
 }

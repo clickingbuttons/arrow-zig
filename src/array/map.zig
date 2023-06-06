@@ -147,7 +147,7 @@ pub fn BuilderAdvanced(
 				.tag = tags.Tag{ .Struct = .{ .nullable = false } },
 				.name = "entries",
 				.allocator = self.allocator,
-				.length = self.offsets.items.len - 1 - self.null_count,
+				.length = self.offsets.items.len - 1,
 				.null_count = 0,
 				.children = children,
 			};
