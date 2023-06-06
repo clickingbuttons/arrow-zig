@@ -13,6 +13,7 @@ pub const BuilderError = error {
 };
 
 pub const DictOptions = struct {
+	nullable: bool,
 	index: tags.DictOptions.Index = .i32,
 	max_load_percentage: u64 = std.hash_map.default_max_load_percentage,
 };
@@ -26,12 +27,17 @@ pub fn BuilderAdvanced(
 	const IndexType = opts.index.Type();
 	const IndexList = std.ArrayListAligned(IndexType, Array.buffer_alignment);
 
+	const NullCount = if (opts.nullable) usize else void;
+	const ValidityList = if (opts.nullable) std.bit_set.DynamicBitSet else void;
+
 	const AppendType = ChildBuilder.Type();
 	const HashMap = std.HashMap(AppendType, IndexType, Context, opts.max_load_percentage);
 
 	return struct {
 		const Self = @This();
 
+		null_count: NullCount,
+		validity: ValidityList,
 		indices: IndexList,
 		hashmap: HashMap,
 		child: ChildBuilder,
@@ -42,6 +48,8 @@ pub fn BuilderAdvanced(
 
 		pub fn init(allocator: std.mem.Allocator) !Self {
 			return .{
+				.null_count = if (NullCount != void) 0 else {},
+				.validity = if (ValidityList != void) try ValidityList.initEmpty(allocator, 0) else {},
 				.indices = IndexList.init(allocator),
 				.hashmap = HashMap.init(allocator),
 				.child = try ChildBuilder.init(allocator),
@@ -49,15 +57,15 @@ pub fn BuilderAdvanced(
 		}
 
 		pub fn deinit(self: *Self) void {
+			if (ValidityList != void) self.validity.deinit();
 			self.indices.deinit();
 			self.hashmap.deinit();
 			self.child.deinit();
 		}
 
-		// Null means insert a null item into the dictionary. This array has no validity.
+		// Null means insert a null item into the child array.
 		pub fn append(self: *Self, value: AppendType) std.mem.Allocator.Error!void {
-			// > The null count of such arrays is dictated only by the validity bitmap of its indices,
-			// > irrespective of any null values in the dictionary.
+			if (ValidityList != void) try self.validity.resize(self.validity.capacity() + 1, true);
 			const count = @intCast(IndexType, self.hashmap.count());
 			const get_res = try self.hashmap.getOrPut(value);
 			const index = if (get_res.found_existing) get_res.value_ptr.* else count;
@@ -66,6 +74,17 @@ pub fn BuilderAdvanced(
 				try self.child.append(value);
 			}
 			try self.indices.append(index);
+		}
+
+		// Insert a null item into the dictionary's validity.
+		pub fn appendNull(self: *Self) std.mem.Allocator.Error!void {
+			if (ValidityList != void) {
+				try self.validity.resize(self.validity.capacity() + 1, false);
+				try self.indices.append(0);
+				self.null_count += 1;
+			} else {
+				@compileError("cannot appendNull to non-nullable dictionary. try append(null) instead.");
+			}
 		}
 
 		fn shrunkIndexType(self: *Self) !tags.DictOptions.Index {
@@ -119,25 +138,16 @@ pub fn BuilderAdvanced(
 				.name = @typeName(AppendType) ++ " builder",
 				.allocator = allocator,
 				.length = length,
-				.null_count = 0,
+				.null_count = if (NullCount != void) self.null_count else 0,
 				.buffers = .{
-					&.{},
+					if (ValidityList != void)
+						try array.validity(allocator, &self.validity, self.null_count)
+					else &.{},
 					try self.shrinkIndex(shrunk_index),
 					&.{},
 				},
 				.children = children,
 			};
-			// > The null count of such arrays is dictated only by the validity bitmap of its indices,
-			// > irrespective of any null values in the dictionary.
-			if (children[0].tag.abiLayout().hasValidity()) {
-				res.*.null_count = children[0].null_count;
-				res.*.buffers[0] = children[0].buffers[0];
-				// I think that the child should have nullable set to false. However, pyarrow thinks
-				// differently so let's be compatible.
-				// children[0].tag.setNullable(false);
-				children[0].null_count = 0;
-				children[0].buffers[0] = &.{};
-			}
 			return res;
 		}
 	};
@@ -182,7 +192,7 @@ test "init + deinit string" {
 	var b = try BuilderAdvanced(
 		flat.Builder(T),
 		AutoContext(T),
-		.{ .index = .i8 },
+		.{ .index = .i8, .nullable = false },
 	).init(std.testing.allocator);
 	defer b.deinit();
 
@@ -201,8 +211,8 @@ test "init + deinit list" {
 	var b = try BuilderAdvanced(
 		list.Builder(T),
 		AutoContext(T),
-		.{ .index = .i8 },
-		).init(std.testing.allocator);
+		.{ .index = .i8, .nullable = false },
+	).init(std.testing.allocator);
 	defer b.deinit();
 
 	try b.append(null);
@@ -220,7 +230,7 @@ test "init + deinit struct" {
 	var b = try BuilderAdvanced(
 		struct_.Builder(T),
 		AutoContext(T),
-		.{ .index = .i8 },
+		.{ .index = .i8, .nullable = false },
 	).init(std.testing.allocator);
 	defer b.deinit();
 
@@ -244,7 +254,7 @@ test "finish" {
 	var b = try BuilderAdvanced(
 		flat.Builder(T),
 		AutoContext(T),
-		.{ .index = .i8 },
+		.{ .index = .i8, .nullable = false },
 	).init(std.testing.allocator);
 	try b.append(null);
 	try b.append(1);
@@ -262,14 +272,15 @@ pub fn Builder(comptime T: type) type {
 	return BuilderAdvanced(
 		builder.Builder(T),
 		AutoContext(T),
-		.{ .index = .i32 },
+		.{ .index = .i32, .nullable = @typeInfo(T) == .Optional },
 	);
 }
 
 test "convienence finish" {
 	const T = ?u8;
 	var b = try Builder(T).init(std.testing.allocator);
-	try b.append(null);
+	try b.appendNull();
+	try b.append(1);
 	try b.append(1);
 
 	const a = try b.finish();

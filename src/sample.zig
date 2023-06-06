@@ -103,7 +103,7 @@ pub fn sparseUnion(allocator: Allocator) !*Array {
 
 pub fn dict(allocator: Allocator) !*Array {
 	var b = try DictBuilder(?[]const u8).init(allocator);
-	try b.append(null);
+	try b.appendNull();
 	try b.append("hello");
 	try b.append("there");
 	try b.append("friend");
@@ -136,7 +136,6 @@ pub fn all(allocator: Allocator) !*Array {
 	};
 	const length = arr_children[0].length;
 	inline for (0..arr_children.len) |i| {
-		std.debug.assert(arr_children[i].length == length);
 		arr_children[i].name = std.fmt.comptimePrint("{c}", .{ @intCast(u8, 'a' + i) });
 	}
 
@@ -161,6 +160,14 @@ pub fn all(allocator: Allocator) !*Array {
 		.children = children,
 	};
 	return res;
+}
+
+test "all struct members same length" {
+	const arr = try all(std.testing.allocator);
+	defer arr.deinit();
+
+	const length = arr.children[0].length;
+	for (arr.children) |child| try std.testing.expectEqual(length, child.length);
 }
 
 fn nBuffers(arr: *Array) usize {
