@@ -297,10 +297,10 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 		const Dictionaries = std.AutoHashMap(i64, struct {
 			length: usize,
 			null_count: usize,
-			bufs: [3]std.ArrayList(u8),
+			buffers: [3]std.ArrayList(u8),
 
 			pub fn deinit(self: @This()) void {
-				for (0..self.bufs.len) |i| self.bufs[i].deinit();
+				for (self.buffers) |b| b.deinit();
 			}
 		});
 
@@ -443,15 +443,15 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 						.length = v.length,
 						.null_count = v.null_count,
 						.buffers = .{
-							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[0].items.len),
-							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[1].items.len),
-							try allocator.alignedAlloc(u8, buffer_alignment, v.bufs[2].items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.buffers[0].items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.buffers[1].items.len),
+							try allocator.alignedAlloc(u8, buffer_alignment, v.buffers[2].items.len),
 						},
 						.children = &.{},
 					};
-					@memcpy(dict_values.buffers[0], v.bufs[0].items);
-					@memcpy(dict_values.buffers[1], v.bufs[1].items);
-					@memcpy(dict_values.buffers[2], v.bufs[2].items);
+					@memcpy(dict_values.buffers[0], v.buffers[0].items);
+					@memcpy(dict_values.buffers[1], v.buffers[1].items);
+					@memcpy(dict_values.buffers[2], v.buffers[2].items);
 					res.children = try allocator.alloc(*Array, 1);
 					res.children[0] = dict_values;
 				} else {
@@ -505,26 +505,24 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 		fn readBuffers(self: *Self, allocator: Allocator, batch: RecordBatch, body_len: i64) ![]Array.Buffer {
 			var i: usize = 0;
-			var buffers = try allocator.alloc(Array.Buffer, batch.buffers.items.len);
+			var res = try allocator.alloc(Array.Buffer, batch.buffers.items.len);
 			errdefer {
-				for (0..i) |j| {
-					allocator.free(buffers[j]);
-				}
-				allocator.free(buffers);
+				for (0..i) |j| allocator.free(res[j]);
+				allocator.free(res);
 			}
 
 			for (batch.buffers.items) |info| {
 				const size = @intCast(usize, info.length);
-				buffers[i] = try self.readBuffer(allocator, size, batch.compression);
+				res[i] = try self.readBuffer(allocator, size, batch.compression);
 
-				const next_offset = if (i == buffers.len - 1) body_len else batch.buffers.items[i + 1].offset;
+				const next_offset = if (i == res.len - 1) body_len else batch.buffers.items[i + 1].offset;
 				i += 1;
 
 				const seek = next_offset - (info.offset + info.length);
 				try self.source.reader().skipBytes(@intCast(u64, seek), .{});
 			}
 
-			return buffers;
+			return res;
 		}
 
 		/// Caller owns Array.
@@ -593,8 +591,8 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 			log.debug("read_dict {d}", .{ dict.id });
 			const batch = if (dict.data) |d| d.* else return IpcError.NoDictionaryData;
 			const n_actual = batch.buffers.items.len;
-			if (n_actual != 2 and n_actual != 3) {
-				log.warn("expected dictionary data to have 2 or 3 buffers, got {d}", .{ n_actual });
+			if (n_actual > 3) {
+				log.warn("expected dictionary data to have 3 or fewer buffers, got {d}", .{ n_actual });
 				return IpcError.InvalidNumDictionaryBuffers;
 			}
 			const node = batch.nodes.items[0];
@@ -603,21 +601,19 @@ pub fn RecordBatchIterator(comptime ReaderType: type) type {
 
 			if (dict.isDelta) {
 				if (self.dictionaries.getPtr(dict.id)) |existing| {
-					for (0..n_actual) |i| try existing.bufs[i].appendSlice(buffers[i]);
+					for (0..buffers.len) |i| try existing.buffers[i].appendSlice(buffers[i]);
 				} else {
 					log.warn("ignoring delta for non-existant dictionary {d}", .{ dict.id });
 				}
 			} else {
-				var bufs: [3]std.ArrayList(u8) = undefined;
-				for (0..bufs.len) |i| {
-					bufs[i] = std.ArrayList(u8).init(allocator);
-					try bufs[i].appendSlice(buffers[i]);
-				}
+				var mutable_bufs: [3]std.ArrayList(u8) = undefined;
+				for (0..mutable_bufs.len) |i| mutable_bufs[i] = std.ArrayList(u8).init(allocator);
+				for (0..buffers.len) |i| try mutable_bufs[i].appendSlice(buffers[i]);
 
 				if (try self.dictionaries.fetchPut(dict.id, .{
 						.length = @intCast(usize, node.length),
 						.null_count = @intCast(usize, node.null_count),
-						.bufs = bufs,
+						.buffers = mutable_bufs,
 					})) |existing| {
 					log.warn("spec does not support replacing dictionary for dictionary {d}", .{ dict.id });
 					existing.value.deinit();

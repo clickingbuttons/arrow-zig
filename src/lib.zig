@@ -29,6 +29,7 @@ test {
 	_ = @import("array/union.zig");
 	_ = @import("array/dict.zig");
 	_ = @import("array/map.zig");
+	_ = @import("array/builder.zig");
 	_ = @import("sample.zig");
 	_ = @import("ipc/reader.zig");
 }
