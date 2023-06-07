@@ -22,14 +22,12 @@ pub fn flat(allocator: Allocator) !*Array {
 }
 
 pub fn fixedFlat(allocator: Allocator) !*Array {
-	var b = try Builder(?[3]u8).init(allocator);
+	const T = [3]u8;
+	var b = try Builder(?T).init(allocator);
 	try b.append(null);
-	const s1 = "hey";
-	try b.append(std.mem.sliceAsBytes(s1)[0..s1.len].*);
-	const s2 = "guy";
-	try b.append(std.mem.sliceAsBytes(s2)[0..s2.len].*);
-	const s3 = "bye";
-	try b.append(std.mem.sliceAsBytes(s3)[0..s3.len].*);
+	try b.append("hey".*);
+	try b.append("guy".*);
+	try b.append("bye".*);
 	return try b.finish();
 }
 
