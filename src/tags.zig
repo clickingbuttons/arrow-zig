@@ -506,27 +506,5 @@ pub const Tag = union(enum) {
 			.Map => |opts| opts.nullable,
 		};
 	}
-
-	pub fn setNullable(self: *Self, is_nullable: bool) void {
-		return switch (self.*) {
-			.Null => std.debug.print("tried to set nullable on {any}\n", .{ self }),
-			.Bool => |*opts| opts.nullable = is_nullable,
-			.Int => |*opts| opts.nullable = is_nullable,
-			.Float => |*opts| opts.nullable = is_nullable,
-			.Date => |*opts| opts.nullable = is_nullable,
-			.Time => |*opts| opts.nullable = is_nullable,
-			.Timestamp => |*opts| opts.nullable = is_nullable,
-			.Duration => |*opts| opts.nullable = is_nullable,
-			.Interval => |*opts| opts.nullable = is_nullable,
-			.Binary => std.debug.print("tried to set nullable on {any}\n", .{ self }),
-			.FixedBinary => |*opts| opts.nullable = is_nullable,
-			.List => |*opts| opts.nullable = is_nullable,
-			.FixedList => |*opts| opts.nullable = is_nullable,
-			.Struct => |*opts| opts.nullable = is_nullable,
-			.Union => |*opts| opts.nullable = is_nullable,
-			.Dictionary => std.debug.print("tried to set nullable on {any}\n", .{ self }),
-			.Map => |*opts| opts.nullable = is_nullable,
-		};
-	}
 };
 

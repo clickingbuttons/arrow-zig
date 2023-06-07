@@ -4,13 +4,11 @@ const sample = @import("sample.zig");
 
 fn sampleRecordBatch2(allocator: std.mem.Allocator, out_array: *abi.Array, out_schema: *abi.Schema) !void {
 	var a = try sample.all(allocator);
-	{
-		errdefer a.deinit();
+	errdefer a.deinit();
 
-		try a.toRecordBatch("table 1");
-		out_array.* = try abi.Array.init(a);
-		out_schema.* = try abi.Schema.init(a);
-	}
+	try a.toRecordBatch("table 1");
+	out_array.* = try abi.Array.init(a);
+	out_schema.* = try abi.Schema.init(a);
 }
 
 export fn sampleRecordBatch(out_array: *abi.Array, out_schema: *abi.Schema) callconv(.C) i64 {
@@ -32,6 +30,7 @@ test {
 	_ = @import("array/builder.zig");
 	_ = @import("sample.zig");
 	_ = @import("ipc/reader.zig");
+	// _ = @import("ipc/writer.zig");
 }
 
 test "abi doesn't leak" {
