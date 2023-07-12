@@ -3,13 +3,13 @@
 	.version = "0.0.1",
 
 	.dependencies = .{
-		.flatbufferz = .{
-			.url = "https://github.com/travisstaloch/flatbufferz/archive/5c4c85b9eff1b8d070a0a84171e7cc3a8d14e2a9.tar.gz",
-			.hash = "1220b27046f2f95868e91c1d12740626ca580e33aed2dce17c212aec8e0124ead9c9"
+		.@"flatbuffers-zig" = .{
+			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/b5629a312da9c5495963602bd475fee710eea434.tar.gz",
+			.hash = "1220e7aa78a0a0620cba09d63c97bc377c69917e1c4b65bf205c424c4c7272921fce",
 		},
 		.lz4 = .{
-			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.1.tar.gz",
-			.hash = "1220bf650a7756887ab50c80e1e4d50b0dbbcaee5e3f333962db5877597ffef639c2"
+			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.3.tar.gz",
+			.hash = "12202bb31c32e2669ab9700627c5cc52e79b85b08397467d9a99637bff8cffd77a1b",
 		},
 	}
 }
