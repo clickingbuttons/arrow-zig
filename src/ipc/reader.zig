@@ -1,6 +1,7 @@
 const std = @import("std");
 const lz4 = @import("lz4");
 const shared = @import("shared.zig");
+const flat = @import("./gen/lib.zig");
 const Array = @import("../array/array.zig").Array;
 
 const Allocator = std.mem.Allocator;
@@ -21,16 +22,9 @@ const IpcError = error{
     InvalidFooterLen,
 } || shared.IpcError;
 
-const Footer = shared.Footer;
-const Message = shared.Message;
-const Schema = shared.Schema;
-const RecordBatch = shared.RecordBatch;
-const DictionaryBatch = shared.DictionaryBatch;
-const BodyCompression = shared.BodyCompression;
-const Field = shared.Field;
-const FieldNode = shared.FieldNode;
-const PackedMessage = shared.PackedMessage;
-const PackedFooter = shared.PackedFooter;
+const Footer = flat.Footer;
+const Message = flat.Message;
+const RecordBatch = flat.RecordBatch;
 
 /// Reads messages out of an IPC stream.
 pub fn Reader(comptime ReaderType: type) type {
@@ -49,7 +43,7 @@ pub fn Reader(comptime ReaderType: type) type {
         allocator: Allocator,
         arena: std.heap.ArenaAllocator,
         source: ReaderType,
-        schema: ?Schema = null,
+        schema: ?flat.Schema = null,
         n_fields: usize = 0,
         n_buffers: usize = 0,
 
@@ -103,7 +97,7 @@ pub fn Reader(comptime ReaderType: type) type {
 
             // Have not yet experienced need for padding.
             std.debug.assert(n_read % 8 == 0);
-            const packed_message = try PackedMessage.init(message_buf);
+            const packed_message = try flat.PackedMessage.init(message_buf);
 
             return try Message.init(allocator, packed_message);
         }
@@ -142,7 +136,7 @@ pub fn Reader(comptime ReaderType: type) type {
             self: *Self,
             buffers: []Array.Buffer,
             batch: RecordBatch,
-            field: Field,
+            field: flat.Field,
         ) !*Array {
             const allocator = self.allocator;
             const tag = try field.toMaybeDictTag();
@@ -203,7 +197,7 @@ pub fn Reader(comptime ReaderType: type) type {
             self: *Self,
             allocator: Allocator,
             size: usize,
-            compression: ?BodyCompression,
+            compression: ?flat.BodyCompression,
         ) !Array.Buffer {
             // Undocumented, but whatever :)
             if (size == 0) return try allocator.alignedAlloc(u8, shared.buffer_alignment, 0);
@@ -464,7 +458,7 @@ const FileReader = struct {
         const n_read = try file.read(footer_buf);
         if (n_read != footer_buf.len) return IpcError.InvalidLen;
 
-        const packed_footer = try PackedFooter.init(footer_buf);
+        const packed_footer = try flat.PackedFooter.init(footer_buf);
         return try Footer.init(allocator, packed_footer);
     }
 
@@ -583,14 +577,14 @@ test "read sample file" {
     try std.testing.expectEqual(@as(usize, 1), n_batches);
 }
 
-//test "read tickers file" {
-//    var ipc_reader = try fileReader(std.testing.allocator, "./tickers.arrow");
-//    defer ipc_reader.deinit();
-//
-//    var n_batches: usize = 0;
-//    while (try ipc_reader.nextBatch()) |rb| {
-//        defer rb.deinit();
-//        n_batches += 1;
-//    }
-//    try std.testing.expectEqual(@as(usize, 1), n_batches);
-//}
+test "read tickers file" {
+    var ipc_reader = try fileReader(std.testing.allocator, "./tickers.arrow");
+    defer ipc_reader.deinit();
+
+    var n_batches: usize = 0;
+    while (try ipc_reader.nextBatch()) |rb| {
+        defer rb.deinit();
+        n_batches += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), n_batches);
+}

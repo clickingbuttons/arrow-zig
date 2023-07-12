@@ -5,6 +5,7 @@ const std = @import("std");
 const types = @import("lib.zig");
 const tags = @import("../../tags.zig");
 const shared = @import("../shared.zig");
+const Array = @import("../../array/array.zig").Array;
 
 const log = shared.log;
 const IpcError = shared.IpcError;
@@ -214,6 +215,23 @@ pub const Field = struct {
         var res: usize = tag.abiLayout().nBuffers();
         for (self.children) |field| res += try field.nBuffers();
         return res;
+    }
+
+    pub fn initFromArray(allocator: std.mem.Allocator, dict_id: *i64, array: *Array) !Self {
+        const n_children = if (array.tag == .Dictionary) 0 else array.children.len;
+        const children = try allocator.alloc(types.Field, n_children);
+        errdefer allocator.free(children);
+        for (0..n_children) |i|
+            children[i] = try initFromArray(allocator, dict_id, array.children[i]);
+
+        return .{
+            .name = try allocator.dupeZ(u8, array.name),
+            .nullable = array.tag.nullable(),
+            .type = try types.Type.initFromArray(allocator, array),
+            .dictionary = types.DictionaryEncoding.initFromTag(dict_id, array.tag),
+            .children = children,
+            .custom_metadata = &.{},
+        };
     }
 };
 

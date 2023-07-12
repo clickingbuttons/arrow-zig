@@ -3,7 +3,9 @@
 const flatbuffers = @import("flatbuffers");
 const std = @import("std");
 const types = @import("lib.zig");
+const Array = @import("../../array/array.zig").Array;
 
+const Allocator = std.mem.Allocator;
 
 /// ----------------------------------------------------------------------
 /// Top-level Type value, enabling extensible type-specific metadata. We can
@@ -86,8 +88,91 @@ pub const Type = union(PackedType.Tag) {
             },
         }
     }
-};
 
+    pub fn initFromArray(allocator: Allocator, array: *Array) Allocator.Error!Self {
+        return switch (array.tag) {
+            .Null => .null,
+            .Bool => .bool,
+            .Int => |i| .{ .int = .{
+                .bit_width = switch (i.bit_width) {
+                    ._8 => 8,
+                    ._16 => 16,
+                    ._32 => 32,
+                    ._64 => 64,
+                },
+                .is_signed = i.signed,
+            } },
+            .Float => |f| .{ .floating_point = .{
+                .precision = switch (f.bit_width) {
+                    ._16 => .half,
+                    ._32 => .single,
+                    ._64 => .double,
+                },
+            } },
+            .Date => |d| .{ .date = .{
+                .unit = switch (d.unit) {
+                    .day => .day,
+                    .millisecond => .millisecond,
+                },
+            } },
+            .Time => |t| .{ .time = .{
+                .unit = switch (t.unit) {
+                    .second => .second,
+                    .millisecond => .millisecond,
+                    .microsecond => .microsecond,
+                    .nanosecond => .nanosecond,
+                },
+                .bit_width = switch (t.unit) {
+                    .second, .millisecond => 32,
+                    .microsecond, .nanosecond => 64,
+                },
+            } },
+            .Timestamp => |t| .{ .timestamp = .{
+                .unit = switch (t.unit) {
+                    .second => .second,
+                    .millisecond => .millisecond,
+                    .microsecond => .microsecond,
+                    .nanosecond => .nanosecond,
+                },
+                .timezone = t.timezone,
+            } },
+            .Duration => |d| .{ .duration = .{
+                .unit = switch (d.unit) {
+                    .second => .second,
+                    .millisecond => .millisecond,
+                    .microsecond => .microsecond,
+                    .nanosecond => .nanosecond,
+                },
+            } },
+            .Interval => |i| .{ .interval = .{
+                .unit = switch (i.unit) {
+                    .year_month => .year_month,
+                    .day_time => .day_time,
+                    .month_day_nanosecond => .month_day_nano,
+                },
+            } },
+            .Binary => |b| {
+                if (b.utf8) return if (b.large) .large_utf8 else .utf8;
+                return if (b.large) .large_binary else .binary;
+            },
+            .FixedBinary => |f| .{ .fixed_size_binary = .{ .byte_width = f.fixed_len } },
+            .List => |l| if (l.large) .large_list else .list,
+            .FixedList => |f| .{ .fixed_size_list = .{ .list_size = f.fixed_len } },
+            .Struct => .struct_,
+            .Union => |u| .{ .@"union" = .{
+                .mode = if (u.dense) .dense else .sparse,
+                .type_ids = brk: {
+                    const len = array.children.len;
+                    var res = try std.ArrayList(i32).initCapacity(allocator, len);
+                    for (0..len) |i| try res.append(@intCast(i));
+                    break :brk try res.toOwnedSlice();
+                },
+            } },
+            .Map => .{ .map = .{ .keys_sorted = false } },
+            .Dictionary => try initFromArray(allocator, array.children[0]),
+        };
+    }
+};
 
 /// ----------------------------------------------------------------------
 /// Top-level Type value, enabling extensible type-specific metadata. We can

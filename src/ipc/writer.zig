@@ -8,173 +8,14 @@ const flat = @import("./gen/lib.zig");
 
 const log = shared.log;
 const Allocator = std.mem.Allocator;
-const Builder = flatbuffers.Builder;
+const FieldNode = flat.FieldNode;
+const Message = flat.Message;
+const Buffer = flat.Buffer;
+const Block = flat.Block;
+const Schema = flat.Schema;
 const IpcError = error{
     ArrayNotDictionary,
 } || shared.IpcError;
-
-const Schema = shared.Schema;
-const DictionaryEncoding = shared.DictionaryEncoding;
-const Field = shared.Field;
-const FieldNode = shared.FieldNode;
-const FieldType = shared.FieldType;
-const Message = shared.Message;
-const MessageHeader = shared.MessageHeader;
-const RecordBatch = shared.RecordBatch;
-const Buffer = shared.Buffer;
-const DictionaryBatch = shared.DictionaryBatch;
-const Footer = shared.Footer;
-const PackedFooter = shared.PackedFooter;
-const Block = shared.Block;
-
-fn toFieldType(allocator: std.mem.Allocator, array: *Array) !FieldType {
-    return switch (array.tag) {
-        .Null => .null,
-        .Bool => .bool,
-        .Int => |i| .{ .int = .{
-            .bit_width = switch (i.bit_width) {
-                ._8 => 8,
-                ._16 => 16,
-                ._32 => 32,
-                ._64 => 64,
-            },
-            .is_signed = i.signed,
-        } },
-        .Float => |f| .{ .floating_point = .{
-            .precision = switch (f.bit_width) {
-                ._16 => .half,
-                ._32 => .single,
-                ._64 => .double,
-            },
-        } },
-        .Date => |d| .{ .date = .{
-            .unit = switch (d.unit) {
-                .day => .day,
-                .millisecond => .millisecond,
-            },
-        } },
-        .Time => |t| .{ .time = .{
-            .unit = switch (t.unit) {
-                .second => .second,
-                .millisecond => .millisecond,
-                .microsecond => .microsecond,
-                .nanosecond => .nanosecond,
-            },
-            .bit_width = switch (t.unit) {
-                .second, .millisecond => 32,
-                .microsecond, .nanosecond => 64,
-            },
-        } },
-        .Timestamp => |t| .{ .timestamp = .{
-            .unit = switch (t.unit) {
-                .second => .second,
-                .millisecond => .millisecond,
-                .microsecond => .microsecond,
-                .nanosecond => .nanosecond,
-            },
-            .timezone = t.timezone,
-        } },
-        .Duration => |d| .{ .duration = .{
-            .unit = switch (d.unit) {
-                .second => .second,
-                .millisecond => .millisecond,
-                .microsecond => .microsecond,
-                .nanosecond => .nanosecond,
-            },
-        } },
-        .Interval => |i| .{ .interval = .{
-            .unit = switch (i.unit) {
-                .year_month => .year_month,
-                .day_time => .day_time,
-                .month_day_nanosecond => .month_day_nano,
-            },
-        } },
-        .Binary => |b| {
-            if (b.utf8) return if (b.large) .large_utf8 else .utf8;
-            return if (b.large) .large_binary else .binary;
-        },
-        .FixedBinary => |f| .{ .fixed_size_binary = .{ .byte_width = f.fixed_len } },
-        .List => |l| if (l.large) .large_list else .list,
-        .FixedList => |f| .{ .fixed_size_list = .{ .list_size = f.fixed_len } },
-        .Struct => .struct_,
-        .Union => |u| .{ .@"union" = .{
-            .mode = if (u.dense) .dense else .sparse,
-            .type_ids = brk: {
-                const len = array.children.len;
-                var res = try std.ArrayList(i32).initCapacity(allocator, len);
-                for (0..len) |i| try res.append(@intCast(i));
-                break :brk try res.toOwnedSlice();
-            },
-        } },
-        .Map => .{ .map = .{ .keys_sorted = false } },
-        .Dictionary => try toFieldType(allocator, array.children[0]),
-    };
-}
-
-fn toDictionaryEncoding(dict_id: *i64, tag: tags.Tag) ?DictionaryEncoding {
-    if (tag != .Dictionary) return null;
-
-    const res = DictionaryEncoding{
-        .id = dict_id.*,
-        .index_type = .{
-            .bit_width = switch (tag.Dictionary.index) {
-                .i32 => 32,
-                .i16 => 16,
-                .i8 => 8,
-            },
-            .is_signed = true,
-        },
-    };
-    dict_id.* += 1;
-    return res;
-}
-
-fn toField(allocator: Allocator, dict_id: *i64, array: *Array) !Field {
-    const n_children = if (array.tag == .Dictionary) 0 else array.children.len;
-    const children = try allocator.alloc(shared.Field, n_children);
-    errdefer allocator.free(children);
-    for (0..n_children) |i| children[i] = try toField(allocator, dict_id, array.children[i]);
-
-    return .{
-        .name = try allocator.dupeZ(u8, array.name),
-        .nullable = array.tag.nullable(),
-        .type = try toFieldType(allocator, array),
-        .dictionary = toDictionaryEncoding(dict_id, array.tag),
-        .children = children,
-        .custom_metadata = &.{},
-    };
-}
-
-fn toSchema(allocator: Allocator, array: *Array) !Schema {
-    var fields = try allocator.alloc(Field, array.children.len);
-    errdefer allocator.free(fields);
-    var dict_id: i64 = 0;
-    for (fields, array.children) |*f, c| f.* = try toField(allocator, &dict_id, c);
-
-    return .{
-        .fields = fields,
-        .custom_metadata = &.{},
-        .features = &.{},
-    };
-}
-
-// test "toSchema" {
-//     const expected_fields = [_]Field{
-//         .{
-//             .name = "a",
-//             .nullable = true,
-//             .type = .{ .int = flat.Int{ .bit_width = 16, .is_signed = true } },
-//             .children = &.{},
-//             .custom_metadata = &.{},
-//         },
-//     };
-//
-//     const batch = try sample.all(std.testing.allocator);
-//     const schema: Schema = try toSchema(std.testing.allocator, batch);
-//     defer schema.deinit(std.testing.allocator);
-//
-//     try std.testing.expectEqualSlices(Field, expected_fields, schema.fields);
-// }
 
 fn getFieldNodes(accumulator: *std.ArrayList(FieldNode), array: *Array) !void {
     try accumulator.append(FieldNode{
@@ -218,7 +59,7 @@ test "getFieldNodes root" {
         .{ .length = 4, .null_count = 1 },
     };
 
-    const schema = try toSchema(allocator, batch);
+    const schema = try Schema.initFromArray(allocator, batch);
     defer schema.deinit(allocator);
     const n_fields = schema.nFields();
     try std.testing.expectEqual(expected_fields.len, n_fields);
@@ -241,7 +82,7 @@ test "getBuffers dict" {
         .{ .offset = 16, .length = 16 },
     };
 
-    const schema = try toSchema(allocator, dict);
+    const schema = try Schema.initFromArray(allocator, dict);
     defer schema.deinit(allocator);
     const n_buffers = try schema.nBuffers();
     try std.testing.expectEqual(expected_buffers.len, n_buffers);
@@ -303,7 +144,7 @@ test "getBuffers root" {
         .{ .offset = 480, .length = 16 },
     };
 
-    const schema = try toSchema(allocator, batch);
+    const schema = try Schema.initFromArray(allocator, batch);
     defer schema.deinit(allocator);
     const n_buffers = try schema.nBuffers();
     try std.testing.expectEqual(expected_buffers.len, n_buffers);
@@ -389,7 +230,7 @@ pub fn Writer(comptime WriterType: type) type {
         /// Writes a schema message
         pub fn writeSchema(self: *Self, array: *Array) !Block {
             const message = Message{
-                .header = .{ .schema = try toSchema(self.allocator, array) },
+                .header = .{ .schema = try Schema.initFromArray(self.allocator, array) },
                 .body_length = 0,
                 .custom_metadata = &.{},
             };
@@ -403,8 +244,8 @@ pub fn Writer(comptime WriterType: type) type {
         }
 
         /// Caller owns returned message
-        fn getRecordBatch(self: *Self, array: *Array) !RecordBatch {
-            const schema = try toSchema(self.allocator, array);
+        fn getRecordBatch(self: *Self, array: *Array) !flat.RecordBatch {
+            const schema = try Schema.initFromArray(self.allocator, array);
             defer schema.deinit(self.allocator);
             const n_fields = schema.nFields();
             const n_buffers = try schema.nBuffers();
@@ -460,7 +301,7 @@ pub fn Writer(comptime WriterType: type) type {
             const dict = array.children[0];
             const body_length = try writeBuffers(dict, void, null);
             const message = Message{
-                .header = .{ .dictionary_batch = DictionaryBatch{
+                .header = .{ .dictionary_batch = flat.DictionaryBatch{
                     .id = self.dict_id,
                     .data = record_batch_message,
                     .is_delta = false,
@@ -533,15 +374,15 @@ const FileWriter = struct {
         dictionaries: []Block,
         record_batches: []Block,
     ) ![]const u8 {
-        const schema = try toSchema(self.allocator, array);
+        const schema = try Schema.initFromArray(self.allocator, array);
         defer schema.deinit(self.allocator);
-        const footer = Footer{
+        const footer = flat.Footer{
             .schema = schema,
             .dictionaries = dictionaries,
             .record_batches = record_batches,
             .custom_metadata = &.{},
         };
-        var builder = Builder.init(self.allocator);
+        var builder = flatbuffers.Builder.init(self.allocator);
         errdefer builder.deinit();
         const offset = try footer.pack(&builder);
         return try builder.finish(offset);

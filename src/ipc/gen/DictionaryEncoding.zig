@@ -70,6 +70,25 @@ pub const DictionaryEncoding = struct {
         log.err("dictionary {d} missing index type", .{self.id});
         return IpcError.InvalidDictionaryIndexType;
     }
+
+    pub fn initFromTag(id: *i64, tag: tags.Tag) ?Self {
+        if (tag != .Dictionary) return null;
+
+        const my_id = id.*;
+        id.* += 1;
+
+        return .{
+            .id = my_id,
+            .index_type = .{
+                .bit_width = switch (tag.Dictionary.index) {
+                    .i32 => 32,
+                    .i16 => 16,
+                    .i8 => 8,
+                },
+                .is_signed = true,
+            },
+        };
+    }
 };
 
 pub const PackedDictionaryEncoding = struct {

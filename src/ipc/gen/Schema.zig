@@ -4,6 +4,8 @@ const flatbuffers = @import("flatbuffers");
 const std = @import("std");
 const types = @import("lib.zig");
 const IpcError = @import("../shared.zig").IpcError;
+const Array = @import("../../array/array.zig").Array;
+const sample = @import("../../sample.zig");
 
 /// ----------------------------------------------------------------------
 /// A Schema describes the columns in a row batch
@@ -76,6 +78,20 @@ pub const Schema = struct {
         for (self.fields) |field| res += try field.nBuffers();
         return res;
     }
+
+    pub fn initFromArray(allocator: std.mem.Allocator, array: *Array) !Self {
+        var fields = try allocator.alloc(types.Field, array.children.len);
+        errdefer allocator.free(fields);
+        var dict_id: i64 = 0;
+        for (fields, array.children) |*f, c|
+            f.* = try types.Field.initFromArray(allocator, &dict_id, c);
+
+        return .{
+            .fields = fields,
+            .custom_metadata = &.{},
+            .features = &.{},
+        };
+    }
 };
 
 /// ----------------------------------------------------------------------
@@ -115,3 +131,195 @@ pub const PackedSchema = struct {
         return self.table.readField([]align(1) types.Feature, 3);
     }
 };
+
+fn testEquals(field1: types.Field, field2: types.Field) !void {
+    errdefer {
+        std.debug.print("expected: \n", .{});
+        field1.print();
+
+        std.debug.print("actual: \n", .{});
+        field2.print();
+    }
+    try std.testing.expectEqualStrings(field1.name, field1.name);
+    try std.testing.expectEqual(field1.nullable, field2.nullable);
+    try std.testing.expectEqualDeep(field1.type, field2.type);
+    try std.testing.expectEqual(field1.dictionary, field2.dictionary);
+    try std.testing.expectEqual(field1.children.len, field2.children.len);
+    for (field1.children, field2.children) |c1, c2| try testEquals(c1, c2);
+    try std.testing.expectEqual(field1.custom_metadata, field2.custom_metadata);
+}
+
+test "initFromArray" {
+    const expected_fields = &[_]types.Field{
+        .{
+            .name = "a",
+            .nullable = true,
+            .type = .{ .int = types.Int{ .bit_width = 16, .is_signed = true } },
+            .children = &.{},
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "b",
+            .nullable = true,
+            .type = .{ .fixed_size_list = .{ .list_size = 3 } },
+            .dictionary = null,
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "i16 builder",
+                    .type = .{ .int = .{ .bit_width = 16, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "c",
+            .nullable = true,
+            .type = .{ .binary = .{} },
+            .children = &.{},
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "d",
+            .nullable = true,
+            .type = .{ .list = .{} },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "i16 builder",
+                    .type = .{ .int = .{ .bit_width = 16, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "e",
+            .nullable = true,
+            .type = .{ .fixed_size_list = .{ .list_size = 3 } },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "i16 builder",
+                    .type = .{ .int = .{ .bit_width = 16, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "f",
+            .nullable = true,
+            .type = .{ .struct_ = .{} },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "a",
+                    .nullable = true,
+                    .type = .{ .int = .{ .bit_width = 32, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+                .{
+                    .name = "b",
+                    .nullable = true,
+                    .type = .{ .int = .{ .bit_width = 64, .is_signed = false } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "g",
+            .nullable = true,
+            .type = .{ .@"union" = .{ .mode = .dense, .type_ids = @constCast(&[_]i32{ 0, 1 }) } },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "f32 builder",
+                    .nullable = true,
+                    .type = .{ .floating_point = .{ .precision = .single } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+                .{
+                    .name = "f32 builder",
+                    .nullable = true,
+                    .type = .{ .int = .{ .bit_width = 32, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "h",
+            .nullable = true,
+            .type = .{ .@"union" = .{ .mode = .sparse, .type_ids = @constCast(&[_]i32{ 0, 1 }) } },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "f32 builder",
+                    .nullable = true,
+                    .type = .{ .floating_point = .{ .precision = .single } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+                .{
+                    .name = "f32 builder",
+                    .nullable = true,
+                    .type = .{ .int = .{ .bit_width = 32, .is_signed = true } },
+                    .children = &.{},
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "i",
+            .nullable = true,
+            .type = .{ .binary = .{} },
+            .dictionary = .{
+                .id = 0,
+                .index_type = .{ .bit_width = 8, .is_signed = true },
+            },
+            .children = &.{},
+            .custom_metadata = &.{},
+        },
+        .{
+            .name = "j",
+            .nullable = true,
+            .type = .{ .map = .{ .keys_sorted = false } },
+            .children = @constCast(&[_]types.Field{
+                .{
+                    .name = "entries",
+                    .type = .{ .struct_ = .{} },
+                    .children = @constCast(&[_]types.Field{
+                        .{
+                            .name = "key",
+                            .type = .{ .binary = .{} },
+                            .children = &.{},
+                            .custom_metadata = &.{},
+                        },
+                        .{
+                            .name = "value",
+                            .nullable = true,
+                            .type = .{ .int = .{ .bit_width = 32, .is_signed = true } },
+                            .children = &.{},
+                            .custom_metadata = &.{},
+                        },
+                    }),
+                    .custom_metadata = &.{},
+                },
+            }),
+            .custom_metadata = &.{},
+        },
+    };
+
+    const batch = try sample.all(std.testing.allocator);
+    defer batch.deinit();
+    const schema: Schema = try Schema.initFromArray(std.testing.allocator, batch);
+    defer schema.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(expected_fields.len, schema.fields.len);
+    for (expected_fields, schema.fields) |f1, f2| try testEquals(f1, f2);
+}
