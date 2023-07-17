@@ -43,7 +43,7 @@ pub fn release(array: *abi.Array) callconv(.C) void {
     const allocator = brk: {
         const arr: *Array = @ptrCast(@alignCast(array.private_data));
         const res = arr.allocator;
-        arr.deinit2(false);
+        arr.deinitAdvanced(false, true);
         break :brk res;
     };
 

@@ -27,9 +27,9 @@ pub const Decimal = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(i32, self.precision);
-        try builder.appendTableField(i32, self.scale);
-        try builder.appendTableField(i32, self.bit_width);
+        try builder.appendTableFieldWithDefault(i32, self.precision, 0);
+        try builder.appendTableFieldWithDefault(i32, self.scale, 0);
+        try builder.appendTableFieldWithDefault(i32, self.bit_width, 128);
         return builder.endTable();
     }
 };

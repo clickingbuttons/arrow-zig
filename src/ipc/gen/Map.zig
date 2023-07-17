@@ -41,7 +41,7 @@ pub const Map = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(bool, self.keys_sorted);
+        try builder.appendTableFieldWithDefault(bool, self.keys_sorted, false);
         return builder.endTable();
     }
 };

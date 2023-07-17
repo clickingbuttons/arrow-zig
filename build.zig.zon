@@ -4,8 +4,8 @@
 
 	.dependencies = .{
 		.@"flatbuffers-zig" = .{
-			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/b5629a312da9c5495963602bd475fee710eea434.tar.gz",
-			.hash = "1220e7aa78a0a0620cba09d63c97bc377c69917e1c4b65bf205c424c4c7272921fce",
+			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/0.0.1.tar.gz",
+			.hash = "12208d20385de50fd7f68519e2f485639df1b22e7dbe9417a774833fe5501744121a",
 		},
 		.lz4 = .{
 			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.3.tar.gz",

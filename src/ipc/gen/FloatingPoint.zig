@@ -16,7 +16,7 @@ pub const FloatingPoint = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(types.Precision, self.precision);
+        try builder.appendTableFieldWithDefault(types.Precision, self.precision, .half);
         return builder.endTable();
     }
 };

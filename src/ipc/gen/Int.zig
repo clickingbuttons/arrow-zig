@@ -17,8 +17,8 @@ pub const Int = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(i32, self.bit_width);
-        try builder.appendTableField(bool, self.is_signed);
+        try builder.appendTableFieldWithDefault(i32, self.bit_width, 0);
+        try builder.appendTableFieldWithDefault(bool, self.is_signed, false);
         return builder.endTable();
     }
 };

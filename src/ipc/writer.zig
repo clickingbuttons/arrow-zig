@@ -67,7 +67,52 @@ test "getFieldNodes root" {
     try std.testing.expectEqualSlices(FieldNode, expected_fields, nodes.items);
 }
 
-test "getBuffers dict" {
+inline fn getPadding(n: usize) usize {
+    // This is what the C++ impl does "for flatbuffers"
+    // Not sure how valid that is...
+    const alignment = 8;
+    const mod = @mod(n, alignment);
+    if (mod != 0) return alignment - mod;
+    return 0;
+}
+
+fn writeBuffers(
+    array: *Array,
+    writer_: anytype,
+    accumulator: ?*std.ArrayList(Buffer),
+) !usize {
+    const commit = @typeInfo(@TypeOf(writer_)) == .Struct;
+
+    var res: usize = 0;
+
+    for (0..array.tag.abiLayout().nBuffers()) |i| {
+        const b = array.buffers[i];
+        if (commit) try writer_.writeAll(b);
+        res += b.len;
+        const n_padding = getPadding(b.len);
+        res += n_padding;
+        if (commit) for (0..n_padding) |_| try writer_.writeByte(0);
+
+        if (accumulator) |a| {
+            var offset = brk: {
+                if (a.items.len == 0) break :brk 0;
+                const last = a.getLast();
+                const padding: i64 = @bitCast(getPadding(@bitCast(last.length)));
+                break :brk last.offset + last.length + padding;
+            };
+            try a.append(Buffer{
+                .offset = offset,
+                .length = @bitCast(b.len),
+            });
+        }
+    }
+    if (array.tag != .Dictionary) {
+        for (array.children) |c| res += try writeBuffers(c, writer_, accumulator);
+    }
+    return res;
+}
+
+test "writeBuffer dict" {
     const allocator = std.testing.allocator;
     const dict = try sample.dict(allocator);
     defer dict.deinit();
@@ -90,7 +135,7 @@ test "getBuffers dict" {
     try std.testing.expectEqualSlices(Buffer, expected_buffers, buffers.items);
 }
 
-test "getBuffers root" {
+test "writeBuffer root" {
     const allocator = std.testing.allocator;
     const batch = try sample.all(allocator);
     defer batch.deinit();
@@ -152,49 +197,6 @@ test "getBuffers root" {
     try std.testing.expectEqualSlices(Buffer, expected_buffers, buffers.items);
 }
 
-inline fn getPadding(n: usize) usize {
-    // Pad to nearest 8 byte boundary because that's what existing files do...
-    const mod = @mod(n, 8);
-    if (mod != 0) return 8 - mod;
-    return 0;
-}
-
-fn writeBuffers(
-    array: *Array,
-    writer_: anytype,
-    accumulator: ?*std.ArrayList(Buffer),
-) !usize {
-    const commit = @typeInfo(@TypeOf(writer_)) == .Struct;
-
-    var res: usize = 0;
-
-    for (0..array.tag.abiLayout().nBuffers()) |i| {
-        const b = array.buffers[i];
-        if (commit) try writer_.writeAll(b);
-        res += b.len;
-        const n_padding = getPadding(b.len);
-        res += n_padding;
-        if (commit) for (0..n_padding) |_| try writer_.writeByte(0);
-
-        if (accumulator) |a| {
-            var offset = brk: {
-                if (a.items.len == 0) break :brk 0;
-                const last = a.getLast();
-                const padding: i64 = @bitCast(getPadding(@bitCast(last.length)));
-                break :brk last.offset + last.length + padding;
-            };
-            try a.append(Buffer{
-                .offset = offset,
-                .length = @bitCast(b.len),
-            });
-        }
-    }
-    if (array.tag != .Dictionary) {
-        for (array.children) |c| res += try writeBuffers(c, writer_, accumulator);
-    }
-    return res;
-}
-
 pub fn Writer(comptime WriterType: type) type {
     return struct {
         const Self = @This();
@@ -203,6 +205,7 @@ pub fn Writer(comptime WriterType: type) type {
         allocator: Allocator,
         dest: Writer_,
         dict_id: i64 = 0,
+        message_i: usize = 0,
 
         pub fn init(allocator: Allocator, dest: WriterType) !Self {
             return .{
@@ -211,36 +214,52 @@ pub fn Writer(comptime WriterType: type) type {
             };
         }
 
-        /// Writes a message and returns the offset to after the message len
-        fn writeMessage(self: *Self, message: Message) !usize {
+        inline fn writePadding(self: *Self) !void {
+            const padding = getPadding(self.dest.bytes_written);
+            for (0..padding) |_| try self.dest.writer().writeByte(0);
+        }
+
+        /// Writes an aligned message header and returns its offset + length
+        fn writeMessage(self: *Self, message: Message) !Block {
             var builder = flatbuffers.Builder.init(self.allocator);
             errdefer builder.deinit();
-            const offset = try message.pack(&builder);
-            const bytes = try builder.finish(offset);
+            const packed_offset = try message.pack(&builder);
+            const bytes = try builder.finish(packed_offset);
             defer self.allocator.free(bytes);
 
-            const len: shared.MessageLen = @intCast(bytes.len);
-            try self.dest.writer().writeIntLittle(shared.MessageLen, len);
-            const res = self.dest.bytes_written;
-            try self.dest.writer().writeAll(bytes);
+            const fname = try std.fmt.allocPrint(self.allocator, "message{d}.bfbs", .{self.message_i});
+            defer self.allocator.free(fname);
+            self.message_i += 1;
+            var file = try std.fs.cwd().createFile(fname, .{});
+            defer file.close();
+            try file.writeAll(bytes);
+            try file.sync();
 
-            return res;
+            const offset = self.dest.bytes_written;
+            std.debug.assert(@mod(offset, 8) == 0);
+
+            const n_padding = getPadding(bytes.len);
+            const len: shared.MessageLen = @intCast(bytes.len + n_padding);
+            try self.dest.writer().writeIntLittle(shared.MessageLen, shared.continuation);
+            try self.dest.writer().writeIntLittle(shared.MessageLen, len);
+            try self.dest.writer().writeAll(bytes);
+            for (0..n_padding) |_| try self.dest.writer().writeByte(0);
+            std.debug.assert(@mod(len, 8) == 0);
+
+            return .{
+                .offset = @bitCast(offset),
+                .meta_data_length = @intCast(self.dest.bytes_written - offset),
+                .body_length = 0,
+            };
         }
 
         /// Writes a schema message
-        pub fn writeSchema(self: *Self, array: *Array) !Block {
-            const message = Message{
-                .header = .{ .schema = try Schema.initFromArray(self.allocator, array) },
+        pub fn writeSchema(self: *Self, schema: Schema) !Block {
+            return try self.writeMessage(.{
+                .header = .{ .schema = schema },
                 .body_length = 0,
                 .custom_metadata = &.{},
-            };
-            defer message.deinit(self.allocator);
-
-            return .{
-                .offset = @bitCast(try self.writeMessage(message)),
-                .meta_data_length = 0,
-                .body_length = 0,
-            };
+            });
         }
 
         /// Caller owns returned message
@@ -271,22 +290,19 @@ pub fn Writer(comptime WriterType: type) type {
 
         /// Writes a record batch message
         pub fn writeBatch(self: *Self, array: *Array) !Block {
-            const body_length = try writeBuffers(array, void, null);
             const message = Message{
                 .header = .{ .record_batch = try self.getRecordBatch(array) },
-                .body_length = @bitCast(body_length),
+                .body_length = @bitCast(try writeBuffers(array, void, null)),
                 .custom_metadata = &.{},
             };
             defer message.deinit(self.allocator);
 
-            const offset = try self.writeMessage(message);
-            _ = try writeBuffers(array, self.dest.writer(), null);
+            var res = try self.writeMessage(message);
+            res.body_length = @bitCast(try writeBuffers(array, self.dest.writer(), null));
+            std.debug.assert(res.body_length == message.body_length);
+            std.debug.assert(@mod(res.body_length, 8) == 0);
 
-            return .{
-                .offset = @bitCast(offset),
-                .meta_data_length = 0,
-                .body_length = message.body_length,
-            };
+            return res;
         }
 
         /// Writes a dictionary batch message
@@ -299,27 +315,24 @@ pub fn Writer(comptime WriterType: type) type {
             // for (record_batch_message.nodes) |n| log.debug("write dict {any}", .{n});
             // for (record_batch_message.buffers) |n| log.debug("write dict {any}", .{n});
             const dict = array.children[0];
-            const body_length = try writeBuffers(dict, void, null);
             const message = Message{
                 .header = .{ .dictionary_batch = flat.DictionaryBatch{
                     .id = self.dict_id,
                     .data = record_batch_message,
                     .is_delta = false,
                 } },
-                .body_length = @bitCast(body_length),
+                .body_length = @bitCast(try writeBuffers(dict, void, null)),
                 .custom_metadata = &.{},
             };
             defer message.deinit(self.allocator);
 
-            const offset = try self.writeMessage(message);
-            _ = try writeBuffers(dict, self.dest.writer(), null);
+            var res = try self.writeMessage(message);
+            res.body_length = @bitCast(try writeBuffers(dict, self.dest.writer(), null));
+            std.debug.assert(res.body_length == message.body_length);
+            std.debug.assert(@mod(res.body_length, 8) == 0);
             self.dict_id += 1;
 
-            return .{
-                .offset = @bitCast(offset),
-                .meta_data_length = 0,
-                .body_length = message.body_length,
-            };
+            return res;
         }
     };
 }
@@ -345,6 +358,9 @@ const FileWriter = struct {
     allocator: Allocator,
     file: std.fs.File,
     writer: WriterType,
+    schema: ?Schema = null,
+    dictionaries: BlockList,
+    record_batches: BlockList,
 
     fn writeMagic(self: *Self, comptime is_start: bool) !void {
         try self.writer.dest.writer().writeAll(shared.magic);
@@ -353,10 +369,14 @@ const FileWriter = struct {
 
     pub fn init(allocator: Allocator, fname: []const u8) !Self {
         var file = try std.fs.cwd().createFile(fname, .{});
+        errdefer file.close();
+
         var res = Self{
             .allocator = allocator,
             .file = file,
             .writer = try writer(allocator, file.writer()),
+            .dictionaries = BlockList.init(allocator),
+            .record_batches = BlockList.init(allocator),
         };
         try res.writeMagic(true);
 
@@ -365,23 +385,20 @@ const FileWriter = struct {
 
     pub fn deinit(self: *Self) void {
         self.file.close();
+        if (self.schema) |s| s.deinit(self.allocator);
+        self.dictionaries.deinit();
+        self.record_batches.deinit();
     }
 
     /// Caller owns returned slice
-    fn getFooter(
-        self: *Self,
-        array: *Array,
-        dictionaries: []Block,
-        record_batches: []Block,
-    ) ![]const u8 {
-        const schema = try Schema.initFromArray(self.allocator, array);
-        defer schema.deinit(self.allocator);
+    fn getFooter(self: *Self) ![]const u8 {
         const footer = flat.Footer{
-            .schema = schema,
-            .dictionaries = dictionaries,
-            .record_batches = record_batches,
+            .schema = self.schema,
+            .dictionaries = self.dictionaries.items,
+            .record_batches = self.record_batches.items,
             .custom_metadata = &.{},
         };
+        // log.debug("footer {any} {any}", .{ footer.dictionaries, footer.record_batches });
         var builder = flatbuffers.Builder.init(self.allocator);
         errdefer builder.deinit();
         const offset = try footer.pack(&builder);
@@ -396,26 +413,23 @@ const FileWriter = struct {
         for (array.children) |c| try self.writeDicts(acc, c);
     }
 
+    /// Writes schema and dictionary batches if required. Then writes record batch.
     pub fn write(self: *Self, array: *Array) !void {
-        _ = try self.writer.writeSchema(array);
+        if (self.schema == null) {
+            self.schema = try Schema.initFromArray(self.allocator, array);
+            _ = try self.writer.writeSchema(self.schema.?);
+            try self.writeDicts(&self.dictionaries, array);
+        }
 
-        var dictionaries = BlockList.init(self.allocator);
-        defer dictionaries.deinit();
-        try self.writeDicts(&dictionaries, array);
+        const record_batch = try self.writer.writeBatch(array);
+        try self.record_batches.append(record_batch);
+    }
 
-        var record_batch = try self.writer.writeBatch(array);
-
-        const footer = try self.getFooter(
-            array,
-            dictionaries.items,
-            @constCast(&[_]Block{record_batch}),
-        );
+    /// Writes footer and sync to disk.
+    pub fn finish(self: *Self) !void {
+        const footer = try self.getFooter();
         defer self.allocator.free(footer);
         try self.writer.dest.writer().writeAll(footer);
-
-        var file = try std.fs.cwd().createFile("./footer.bfbs", .{});
-        defer file.close();
-        try file.writeAll(footer);
 
         const len: shared.MessageLen = @intCast(footer.len);
         try self.writer.dest.writer().writeIntLittle(shared.MessageLen, len);
@@ -435,15 +449,15 @@ const reader = @import("./reader.zig");
 const sample = @import("../sample.zig");
 
 test "write and read sample file" {
-    const fname = "./sample2.arrow";
     const batch = try sample.all(std.testing.allocator);
     try batch.toRecordBatch("record batch");
     defer batch.deinit();
 
+    const fname = "./testdata/sample_written.arrow";
     var ipc_writer = try fileWriter(std.testing.allocator, fname);
     defer ipc_writer.deinit();
-
     try ipc_writer.write(batch);
+    try ipc_writer.finish();
 
     var ipc_reader = try reader.fileReader(std.testing.allocator, fname);
     defer ipc_reader.deinit();

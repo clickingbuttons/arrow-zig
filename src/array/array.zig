@@ -23,22 +23,26 @@ pub const Array = struct {
     // Depending on layout stores validity, type_ids, offets, data, or indices.
     // You can tell how many buffers there are by looking at `tag.abiLayout().nBuffers()`
     buffers: Buffers = .{ &.{}, &.{}, &.{} },
-    children: []*Array,
+    children: []*Array = &.{},
 
     pub fn init(allocator: Allocator) !*Self {
         return try allocator.create(Self);
     }
 
-    pub fn deinit2(self: *Self, comptime free_children: bool) void {
-        if (free_children) for (self.children) |c| c.deinit();
+    pub fn deinitAdvanced(
+        self: *Self,
+        comptime free_children: bool,
+        comptime free_buffers: bool,
+    ) void {
+        if (free_children) for (self.children) |c| c.deinitAdvanced(free_children, free_buffers);
         if (self.children.len > 0) self.allocator.free(self.children);
 
-        for (self.buffers) |b| if (b.len > 0) self.allocator.free(b);
+        if (free_buffers) for (self.buffers) |b| if (b.len > 0) self.allocator.free(b);
         self.allocator.destroy(self);
     }
 
     pub fn deinit(self: *Self) void {
-        self.deinit2(true);
+        self.deinitAdvanced(true, true);
     }
 
     pub fn toRecordBatch(self: *Self, name: [:0]const u8) RecordBatchError!void {

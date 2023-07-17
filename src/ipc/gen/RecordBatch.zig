@@ -57,7 +57,7 @@ pub const RecordBatch = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(i64, self.length);
+        try builder.appendTableFieldWithDefault(i64, self.length, 0);
         try builder.appendTableFieldOffset(field_offsets.nodes);
         try builder.appendTableFieldOffset(field_offsets.buffers);
         try builder.appendTableFieldOffset(field_offsets.compression);

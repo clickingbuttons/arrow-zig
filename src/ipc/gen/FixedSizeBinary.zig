@@ -16,7 +16,7 @@ pub const FixedSizeBinary = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(i32, self.byte_width);
+        try builder.appendTableFieldWithDefault(i32, self.byte_width, 0);
         return builder.endTable();
     }
 };

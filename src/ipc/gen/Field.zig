@@ -81,8 +81,8 @@ pub const Field = struct {
 
         try builder.startTable();
         try builder.appendTableFieldOffset(field_offsets.name);
-        try builder.appendTableField(bool, self.nullable);
-        try builder.appendTableField(types.PackedType.Tag, self.type);
+        try builder.appendTableFieldWithDefault(bool, self.nullable, false);
+        try builder.appendTableFieldWithDefault(types.PackedType.Tag, self.type, .none);
         try builder.appendTableFieldOffset(field_offsets.type);
         try builder.appendTableFieldOffset(field_offsets.dictionary);
         try builder.appendTableFieldOffset(field_offsets.children);

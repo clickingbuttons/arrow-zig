@@ -16,7 +16,7 @@ pub const Duration = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(types.TimeUnit, self.unit);
+        try builder.appendTableFieldWithDefault(types.TimeUnit, self.unit, .millisecond);
         return builder.endTable();
     }
 };

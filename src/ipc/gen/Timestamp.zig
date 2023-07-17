@@ -146,7 +146,7 @@ pub const Timestamp = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(types.TimeUnit, self.unit);
+        try builder.appendTableFieldWithDefault(types.TimeUnit, self.unit, .second);
         try builder.appendTableFieldOffset(field_offsets.timezone);
         return builder.endTable();
     }

@@ -76,9 +76,10 @@ for k in expected.keys():
 		code = 1
 		print("column", k, "expected", expected[k], "got", actual)
 
+options = pa.ipc.IpcWriteOptions(compression='zstd')
 reader = tb.to_reader()
-with pa.OSFile("sample.arrow", "wb") as sink:
-	with pa.ipc.new_file(sink, schema=reader.schema) as writer:
+with pa.OSFile("sample.zstd.arrow", "wb") as sink:
+	with pa.ipc.new_file(sink, schema=reader.schema, options=options) as writer:
 		for batch in reader:
 			writer.write(batch)
 

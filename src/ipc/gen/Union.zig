@@ -35,7 +35,7 @@ pub const Union = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(types.UnionMode, self.mode);
+        try builder.appendTableFieldWithDefault(types.UnionMode, self.mode, .sparse);
         try builder.appendTableFieldOffset(field_offsets.type_ids);
         return builder.endTable();
     }

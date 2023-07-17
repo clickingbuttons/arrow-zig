@@ -32,8 +32,8 @@ pub const Time = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(types.TimeUnit, self.unit);
-        try builder.appendTableField(i32, self.bit_width);
+        try builder.appendTableFieldWithDefault(types.TimeUnit, self.unit, .millisecond);
+        try builder.appendTableFieldWithDefault(i32, self.bit_width, 32);
         return builder.endTable();
     }
 };

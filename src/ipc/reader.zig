@@ -19,6 +19,7 @@ const IpcError = error{
     DictNotFound,
     NoDictionaryData,
     InvalidNumDictionaryBuffers,
+    InvalidNumDictionaryNodes,
     InvalidFooterLen,
 } || shared.IpcError;
 
@@ -26,19 +27,23 @@ const Footer = flat.Footer;
 const Message = flat.Message;
 const RecordBatch = flat.RecordBatch;
 
+const MutableDictionary = struct {
+    length: usize,
+    null_count: usize,
+    buffers: [3]std.ArrayList(u8),
+
+    const Self = @This();
+
+    pub fn deinit(self: Self) void {
+        for (self.buffers) |b| b.deinit();
+    }
+};
+
 /// Reads messages out of an IPC stream.
 pub fn Reader(comptime ReaderType: type) type {
     return struct {
         const Self = @This();
-        const Dictionaries = std.AutoHashMap(i64, struct {
-            length: usize,
-            null_count: usize,
-            buffers: [3]std.ArrayList(u8),
-
-            pub fn deinit(self: @This()) void {
-                for (self.buffers) |b| b.deinit();
-            }
-        });
+        const Dictionaries = std.AutoHashMap(i64, MutableDictionary);
 
         allocator: Allocator,
         arena: std.heap.ArenaAllocator,
@@ -50,6 +55,7 @@ pub fn Reader(comptime ReaderType: type) type {
         node_index: usize = 0,
         buffer_index: usize = 0,
         dictionaries: Dictionaries,
+        message_i: usize = 0,
 
         pub fn init(allocator: Allocator, source: ReaderType) !Self {
             return .{
@@ -61,17 +67,15 @@ pub fn Reader(comptime ReaderType: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            var iter = self.dictionaries.valueIterator();
-            while (iter.next()) |d| d.deinit();
             self.dictionaries.deinit();
             self.arena.deinit();
         }
 
         fn readMessageLen(self: *Self) !usize {
             // > This component was introduced in version 0.15.0 in part to address the 8-byte alignment requirement of Flatbuffers
-            var res = try self.source.reader().readIntLittle(shared.MessageLen);
+            var res = try self.source.readIntLittle(shared.MessageLen);
             while (res == shared.continuation) {
-                res = try self.source.reader().readIntLittle(shared.MessageLen);
+                res = try self.source.readIntLittle(shared.MessageLen);
             }
 
             return @intCast(res);
@@ -79,9 +83,8 @@ pub fn Reader(comptime ReaderType: type) type {
 
         pub fn readMessage(self: *Self) !?Message {
             // <continuation: 0xFFFFFFFF> (optional)
-            // <metadata_size: int32>
+            // <metadata_size: int32> (must be multiple of 8)
             // <metadata_flatbuffer: bytes>
-            // <padding to 8 byte boundary>
             // <message body>
             const message_len = try self.readMessageLen();
             if (message_len == 0) return null; // EOS
@@ -89,29 +92,37 @@ pub fn Reader(comptime ReaderType: type) type {
             const allocator = self.arena.allocator();
             var message_buf = try allocator.alloc(u8, message_len);
             errdefer allocator.free(message_buf);
-            const n_read = try self.source.reader().read(message_buf);
+            const n_read = try self.source.readAll(message_buf);
             if (n_read != message_buf.len) {
                 log.err("expected {d} bytes in message, got {d}", .{ message_buf.len, n_read });
                 return IpcError.InvalidLen;
             }
 
-            // Have not yet experienced need for padding.
-            std.debug.assert(n_read % 8 == 0);
-            const packed_message = try flat.PackedMessage.init(message_buf);
-
-            return try Message.init(allocator, packed_message);
-        }
-
-        fn readMessageBody(self: *Self, size: i64) ![]u8 {
-            const real_size: usize = @bitCast(size);
-            const res = try self.arena.allocator().alignedAlloc(u8, shared.buffer_alignment, real_size);
-            const n_read = try self.source.reader().read(res);
-            if (n_read != res.len) {
-                log.err("record batch ended early", .{});
-                return IpcError.InvalidRecordBatch;
+            if (n_read % 8 != 0) {
+                log.err("expected message to be padded to 8 bytes, got {d}", .{n_read});
+                return IpcError.InvalidLen;
             }
 
-            return res;
+            const fname = try std.fmt.allocPrint(self.allocator, "message{d}.bfbs", .{self.message_i});
+            defer self.allocator.free(fname);
+            const file = try std.fs.cwd().createFile(fname, .{});
+            defer file.close();
+            try file.writeAll(message_buf);
+            try file.sync();
+            self.message_i += 1;
+
+            const packed_message = try flat.PackedMessage.init(message_buf);
+            log.debug("read {s} message len {d}", .{
+                switch (try packed_message.headerType()) {
+                    .none => "none",
+                    .schema => "schema",
+                    .dictionary_batch => "dictionary_batch",
+                    .record_batch => "record_batch",
+                },
+                message_len,
+            });
+
+            return try Message.init(allocator, packed_message);
         }
 
         pub fn readSchema(self: *Self) !void {
@@ -153,6 +164,7 @@ pub fn Reader(comptime ReaderType: type) type {
                 .null_count = @bitCast(node.null_count),
                 .children = try allocator.alloc(*Array, field.children.len),
             };
+            errdefer allocator.free(res.children);
             self.node_index += 1;
 
             for (0..res.tag.abiLayout().nBuffers()) |i| {
@@ -160,33 +172,39 @@ pub fn Reader(comptime ReaderType: type) type {
                 self.buffer_index += 1;
             }
 
-            for (field.children, 0..) |child, i| {
-                res.children[i] = try self.readField(buffers, batch, child);
+            var child_i: usize = 0;
+            errdefer {
+                for (res.children[0..child_i]) |c| c.deinitAdvanced(true, false);
+            }
+            for (field.children) |child| {
+                res.children[child_i] = try self.readField(buffers, batch, child);
+                child_i += 1;
             }
             if (field.dictionary) |d| {
                 // log.debug("read field \"{s}\" dictionary {d}", .{ field.name, d.id });
                 if (self.dictionaries.get(d.id)) |v| {
                     // TODO: refcount dictionary instead of copying out
                     var dict_values = try allocator.create(Array);
+                    errdefer allocator.destroy(dict_values);
                     dict_values.* = .{
                         .tag = try field.toTag(),
                         .name = "dict values",
                         .allocator = allocator,
                         .length = v.length,
                         .null_count = v.null_count,
-                        .buffers = .{
-                            try allocator.alignedAlloc(u8, shared.buffer_alignment, v.buffers[0].items.len),
-                            try allocator.alignedAlloc(u8, shared.buffer_alignment, v.buffers[1].items.len),
-                            try allocator.alignedAlloc(u8, shared.buffer_alignment, v.buffers[2].items.len),
-                        },
-                        .children = &.{},
                     };
-                    @memcpy(dict_values.buffers[0], v.buffers[0].items);
-                    @memcpy(dict_values.buffers[1], v.buffers[1].items);
-                    @memcpy(dict_values.buffers[2], v.buffers[2].items);
+                    errdefer for (dict_values.buffers) |b| if (b.len > 0) allocator.free(b);
+                    for (0..3) |i| {
+                        var src = v.buffers[i].items;
+                        if (src.len == 0) continue;
+                        dict_values.buffers[i] = try allocator.alignedAlloc(u8, shared.buffer_alignment, src.len);
+                        @memcpy(dict_values.buffers[i], src);
+                    }
                     res.children = try allocator.alloc(*Array, 1);
+                    errdefer allocator.free(res.children);
                     res.children[0] = dict_values;
                 } else {
+                    log.err("dictionary {d} not previously read", .{d.id});
                     return IpcError.DictNotFound;
                 }
             }
@@ -209,29 +227,25 @@ pub fn Reader(comptime ReaderType: type) type {
             // > follows is not compressed, which can be useful for cases where
             // > compression does not yield appreciable savings.
             const uncompressed_size = if (compression != null) brk: {
-                const res: usize = @bitCast(try self.source.reader().readIntLittle(i64));
+                const res: usize = @bitCast(try self.source.readIntLittle(i64));
                 break :brk if (res == -1) size else res;
             } else size;
             var res = try allocator.alignedAlloc(u8, shared.buffer_alignment, uncompressed_size);
             errdefer allocator.free(res);
-            var n_read: ?usize = null;
-
-            if (compression) |c| {
+            const n_read: usize = if (compression) |c| brk: {
                 switch (c.codec) {
                     .lz4__frame => {
-                        var stream = lz4.decompressStream(self.arena.allocator(), self.source.reader());
+                        var stream = lz4.decompressStream(self.arena.allocator(), self.source);
                         defer stream.deinit();
-                        n_read = try stream.read(res);
+                        break :brk try stream.reader().readAll(res);
                     },
                     .zstd => {
-                        var stream = std.compress.zstd.decompressStream(self.arena.allocator(), self.source.reader());
+                        var stream = std.compress.zstd.decompressStream(self.arena.allocator(), self.source);
                         defer stream.deinit();
-                        n_read = try stream.read(res);
+                        break :brk try stream.reader().readAll(res);
                     },
                 }
-            } else {
-                n_read = try self.source.reader().read(res);
-            }
+            } else try self.source.readAll(res);
 
             if (res.len != n_read) {
                 log.err("expected {d} bytes in record batch body, got {any}", .{ res.len, n_read });
@@ -265,7 +279,7 @@ pub fn Reader(comptime ReaderType: type) type {
                 i += 1;
 
                 const seek: u64 = @intCast(next_offset - (info.offset + info.length));
-                try self.source.reader().skipBytes(seek, .{});
+                try self.source.skipBytes(seek, .{});
             }
 
             return res;
@@ -279,9 +293,9 @@ pub fn Reader(comptime ReaderType: type) type {
                     // https://arrow.apache.org/docs/format/Columnar.html#recordbatch-message
                     // > Fields and buffers are flattened by a pre-order depth-first traversal of the fields in the
                     // > record batch.
-                    log.debug("read batch len {d} compression {any}", .{
+                    log.debug("read batch len {d} compression {s}", .{
                         batch.length,
-                        batch.compression,
+                        if (batch.compression) |c| @tagName(c.codec) else "none",
                     });
 
                     const allocator = self.allocator;
@@ -306,13 +320,18 @@ pub fn Reader(comptime ReaderType: type) type {
 
                     const buffers = try self.readBuffers(allocator, batch, message.body_length);
                     defer allocator.free(buffers);
+                    errdefer for (buffers) |b| allocator.free(b);
 
                     // Recursively read tags, name, and buffers into arrays from `schema.fields`
                     self.node_index = 0;
                     self.buffer_index = 0;
                     var children = try allocator.alloc(*Array, self.schema.?.fields.len);
-                    for (self.schema.?.fields, 0..) |field, i| {
-                        children[i] = try self.readField(buffers, batch, field);
+                    errdefer allocator.free(children);
+                    var child_i: usize = 0;
+                    errdefer for (children[0..child_i]) |c| c.deinitAdvanced(true, false);
+                    for (self.schema.?.fields) |field| {
+                        children[child_i] = try self.readField(buffers, batch, field);
+                        child_i += 1;
                     }
 
                     const res = try allocator.create(Array);
@@ -340,7 +359,7 @@ pub fn Reader(comptime ReaderType: type) type {
                     const allocator = self.arena.allocator();
                     const id = dict.id;
 
-                    log.debug("read_dict {d}", .{id});
+                    log.debug("read dict id {d}", .{id});
                     if (dict.data == null) return IpcError.NoDictionaryData;
                     const batch: RecordBatch = dict.data.?;
                     const n_actual: usize = batch.buffers.len;
@@ -348,7 +367,7 @@ pub fn Reader(comptime ReaderType: type) type {
                         log.warn("expected dictionary data to have 3 or fewer buffers, got {d}", .{n_actual});
                         return IpcError.InvalidNumDictionaryBuffers;
                     }
-                    const node = batch.nodes[0];
+
                     const buffers = try self.readBuffers(allocator, batch, message.body_length);
                     defer allocator.free(buffers);
 
@@ -360,8 +379,16 @@ pub fn Reader(comptime ReaderType: type) type {
                         }
                     } else {
                         var mutable_bufs: [3]std.ArrayList(u8) = undefined;
-                        for (0..mutable_bufs.len) |i| mutable_bufs[i] = std.ArrayList(u8).init(allocator);
-                        for (0..buffers.len) |i| try mutable_bufs[i].appendSlice(buffers[i]);
+                        for (&mutable_bufs, buffers) |*dest, src| {
+                            dest.* = try std.ArrayList(u8).initCapacity(allocator, src.len);
+                            try dest.appendSlice(src);
+                        }
+
+                        if (batch.nodes.len != 1) {
+                            log.warn("expected dictionary to have exactly 1 node, got {d}", .{batch.nodes.len});
+                            return IpcError.InvalidNumDictionaryNodes;
+                        }
+                        const node = batch.nodes[0];
 
                         if (try self.dictionaries.fetchPut(id, .{
                             .length = @bitCast(node.length),
@@ -383,7 +410,7 @@ pub fn Reader(comptime ReaderType: type) type {
                 switch (message.header) {
                     .none => {
                         log.warn("ignoring unexpected message {any}", .{message.HeaderType()});
-                        try self.source.reader().skipBytes(message.BodyLength(), .{});
+                        try self.source.skipBytes(message.BodyLength(), .{});
                     },
                     .schema => {
                         try self.readSchema();
@@ -403,22 +430,14 @@ pub fn Reader(comptime ReaderType: type) type {
     };
 }
 
-fn BufferedReader(comptime ReaderType: type) type {
-    return std.io.BufferedReader(4096, ReaderType);
-}
-
-pub fn reader(
-    allocator: Allocator,
-    reader_: anytype,
-) !Reader(BufferedReader(@TypeOf(reader_))) {
-    var buffered = std.io.bufferedReader(reader_);
-    return Reader(BufferedReader(@TypeOf(reader_))).init(allocator, buffered);
+pub fn reader(allocator: Allocator, reader_: anytype) !Reader(@TypeOf(reader_)) {
+    return Reader(@TypeOf(reader_)).init(allocator, reader_);
 }
 
 /// Handles file header, footer and strange dictionary requirements. Convienently closes file in .deinit.
 const FileReader = struct {
     const Self = @This();
-    const ReaderType = Reader(BufferedReader(std.fs.File.Reader));
+    const ReaderType = Reader(std.fs.File.Reader);
 
     allocator: Allocator,
     file: std.fs.File,
@@ -428,7 +447,7 @@ const FileReader = struct {
 
     fn readMagic(file: std.fs.File, comptime is_start: bool) !void {
         var maybe_magic: [shared.magic.len]u8 = undefined;
-        const n_read = try file.read(&maybe_magic);
+        const n_read = try file.readAll(&maybe_magic);
         const location = if (is_start) "start" else "end";
         if (shared.magic.len != n_read) {
             log.err("expected {s} magic len {d}, got {d}", .{ location, shared.magic.len, n_read });
@@ -455,7 +474,7 @@ const FileReader = struct {
         const footer_buf = try allocator.alloc(u8, @as(usize, @intCast(footer_len)));
         defer allocator.free(footer_buf);
         try file.seekFromEnd(seek_back - footer_len);
-        const n_read = try file.read(footer_buf);
+        const n_read = try file.readAll(footer_buf);
         if (n_read != footer_buf.len) return IpcError.InvalidLen;
 
         const packed_footer = try flat.PackedFooter.init(footer_buf);
@@ -486,8 +505,7 @@ const FileReader = struct {
         // We respect this.
 
         for (footer.dictionaries) |d| {
-            const offset: usize = @bitCast(d.offset - @sizeOf(shared.MessageLen));
-            log.debug("offset {d}", .{offset});
+            const offset: usize = @bitCast(d.offset);
             try file.seekTo(offset);
             if (try reader_.readMessage()) |message| {
                 try reader_.readDict(&message);
@@ -505,6 +523,7 @@ const FileReader = struct {
         try readMagic(file, true);
 
         const footer = try readFooter(allocator, file);
+        log.debug("read footer {any} {any}", .{ footer.dictionaries, footer.record_batches });
         errdefer footer.deinit(allocator);
 
         return .{
@@ -526,12 +545,15 @@ const FileReader = struct {
         if (self.batch_index >= self.footer.record_batches.len) return null;
 
         const rb = self.footer.record_batches[self.batch_index];
-        const offset: usize = @bitCast(rb.offset - @sizeOf(shared.MessageLen));
+        const offset: usize = @bitCast(rb.offset);
         try self.file.seekTo(offset);
         self.batch_index += 1;
 
-        if (try self.reader.readMessage()) |message| return try self.reader.readBatch(&message);
-        log.err("invalid record batch message at offset {d}", .{offset});
+        if (try self.reader.readMessage()) |message| {
+            errdefer message.deinit(self.reader.arena.allocator());
+            return try self.reader.readBatch(&message);
+        }
+        log.err("expected non-empty record batch message at offset {d}", .{offset});
         return IpcError.InvalidRecordBatch;
     }
 };
@@ -559,8 +581,8 @@ pub fn testEquals(arr1: *Array, arr2: *Array) !void {
     for (0..arr1.children.len) |i| try testEquals(arr1.children[i], arr2.children[i]);
 }
 
-test "read sample file" {
-    var ipc_reader = try fileReader(std.testing.allocator, "./sample.arrow");
+fn testSample(fname: []const u8) !void {
+    var ipc_reader = try fileReader(std.testing.allocator, fname);
     defer ipc_reader.deinit();
 
     const expected = try sample.all(std.testing.allocator);
@@ -577,8 +599,20 @@ test "read sample file" {
     try std.testing.expectEqual(@as(usize, 1), n_batches);
 }
 
-test "read tickers file" {
-    var ipc_reader = try fileReader(std.testing.allocator, "./tickers.arrow");
+test "read uncompressed sample file" {
+    try testSample("./testdata/sample.arrow");
+}
+
+test "read lz4 compressed sample file" {
+    try testSample("./testdata/sample.lz4.arrow");
+}
+
+test "read zstd compressed sample file" {
+    try testSample("./testdata/sample.zstd.arrow");
+}
+
+test "read zstd compressed tickers file with multiple record batches" {
+    var ipc_reader = try fileReader(std.testing.allocator, "./testdata/tickers.arrow");
     defer ipc_reader.deinit();
 
     var n_batches: usize = 0;
@@ -586,5 +620,5 @@ test "read tickers file" {
         defer rb.deinit();
         n_batches += 1;
     }
-    try std.testing.expectEqual(@as(usize, 1), n_batches);
+    try std.testing.expectEqual(@as(usize, 2), n_batches);
 }

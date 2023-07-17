@@ -24,8 +24,8 @@ pub const BodyCompression = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(types.CompressionType, self.codec);
-        try builder.appendTableField(types.BodyCompressionMethod, self.method);
+        try builder.appendTableFieldWithDefault(types.CompressionType, self.codec, .lz4__frame);
+        try builder.appendTableFieldWithDefault(types.BodyCompressionMethod, self.method, .buffer);
         return builder.endTable();
     }
 };

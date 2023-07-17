@@ -60,7 +60,7 @@ pub const Schema = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(types.Endianness, self.endianness);
+        try builder.appendTableFieldWithDefault(types.Endianness, self.endianness, .little);
         try builder.appendTableFieldOffset(field_offsets.fields);
         try builder.appendTableFieldOffset(field_offsets.custom_metadata);
         try builder.appendTableFieldOffset(field_offsets.features);

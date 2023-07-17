@@ -42,9 +42,9 @@ pub const DictionaryBatch = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(i64, self.id);
+        try builder.appendTableFieldWithDefault(i64, self.id, 0);
         try builder.appendTableFieldOffset(field_offsets.data);
-        try builder.appendTableField(bool, self.is_delta);
+        try builder.appendTableFieldWithDefault(bool, self.is_delta, false);
         return builder.endTable();
     }
 };

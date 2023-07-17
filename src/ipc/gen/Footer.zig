@@ -61,7 +61,7 @@ pub const Footer = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(types.MetadataVersion, self.version);
+        try builder.appendTableFieldWithDefault(types.MetadataVersion, self.version, .v1);
         try builder.appendTableFieldOffset(field_offsets.schema);
         try builder.appendTableFieldOffset(field_offsets.dictionaries);
         try builder.appendTableFieldOffset(field_offsets.record_batches);

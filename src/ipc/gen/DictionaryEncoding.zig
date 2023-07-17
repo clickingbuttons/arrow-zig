@@ -45,13 +45,12 @@ pub const DictionaryEncoding = struct {
         };
 
         try builder.startTable();
-        try builder.appendTableField(i64, self.id);
+        try builder.appendTableFieldWithDefault(i64, self.id, 0);
         try builder.appendTableFieldOffset(field_offsets.index_type);
-        try builder.appendTableField(bool, self.is_ordered);
-        try builder.appendTableField(types.DictionaryKind, self.dictionary_kind);
+        try builder.appendTableFieldWithDefault(bool, self.is_ordered, false);
+        try builder.appendTableFieldWithDefault(types.DictionaryKind, self.dictionary_kind, .dense_array);
         return builder.endTable();
     }
-
     pub fn toTag(self: Self) IpcError!tags.Tag {
         if (self.index_type) |t| {
             const index: tags.DictOptions.Index = switch (t.bit_width) {

@@ -16,7 +16,7 @@ pub const Interval = struct {
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
         try builder.startTable();
-        try builder.appendTableField(types.IntervalUnit, self.unit);
+        try builder.appendTableFieldWithDefault(types.IntervalUnit, self.unit, .year_month);
         return builder.endTable();
     }
 };
