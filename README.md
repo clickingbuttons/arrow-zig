@@ -37,19 +37,19 @@ Run `zig build` and then copy the expected hash into `build.zig.zon`.
 
 Arrow has [11 different array types](https://arrow.apache.org/docs/format/Columnar.html#buffer-listing-for-each-layout). Here's how arrow-zig maps them to Zig types.
 
-| Arrow type            | Zig type                                  | arrow-zig builder |
-|-----------------------|-------------------------------------------|-------------------|
-| Primitive             | i{8,16,32,64}, u{8,16,32,64}, f{16,32,64} | flat              |
-| Variable binary       | []u8,[]const u8                           | flat              |
-| List                  | []T                                       | list              |
-| Fixed-size list       | [N]T                                      | list              |
-| Struct                | struct                                    | struct            |
-| Dense union (default) | union                                     | union             |
-| Sparse union          | union                                     | union             |
-| Null                  | void                                      | Array.null_array  |
-| Dictionary            | T                                         | dictionary        |
-| Map                   | struct { T, V }, struct { T, ?V }         | map               |
-| Run-end encoded       | N/A                                       | N/A               |
+| Arrow type            | Zig type                                            | arrow-zig builder |
+|-----------------------|-----------------------------------------------------|-------------------|
+| Primitive             | i8, i16, i32, i64, u8, u16, u32, u64, f16, f32, f64 | flat              |
+| Variable binary       | []u8, []const u8                                    | flat              |
+| List                  | []T                                                 | list              |
+| Fixed-size list       | [N]T                                                | list              |
+| Struct                | struct                                              | struct            |
+| Dense union (default) | union                                               | union             |
+| Sparse union          | union                                               | union             |
+| Null                  | void                                                | Array.null_array  |
+| Dictionary            | T                                                   | dictionary        |
+| Map                   | struct { T, V }, struct { T, ?V }                   | map               |
+| Run-end encoded       | N/A                                                 | N/A               |
 
 Notes:
 
@@ -124,7 +124,7 @@ If you have a normal `Array` you can export it to a `abi.Schema` and `abi.Array`
 ```zig
 var abi_schema = try abi.Schema.init(array);
 var abi_arr = try abi.Array.init(array);
-try callExternFn(@ptrCast(&abi_schema), @ptrCast(&abi_arr));
+externFn(&abi_schema, &abi_arr);
 ```
 
 #### Import

@@ -15,4 +15,5 @@ jobs:
         with:
           version: 0.11.0-dev.3937+78eb3c561
       - run: zig build test
+      - run: pip install pyarrow
       - run: zig build test-integration
