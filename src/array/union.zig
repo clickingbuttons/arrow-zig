@@ -2,7 +2,7 @@
 const std = @import("std");
 const tags = @import("../tags.zig");
 const Array = @import("./array.zig").Array;
-const builder = @import("./builder.zig");
+const AnyBuilder = @import("./lib.zig").Builder;
 
 // Per spec
 pub const TypeId = i8;
@@ -242,7 +242,7 @@ fn MakeChildrenBuilders(comptime Union: type, comptime nullable: bool) type {
         }
         fields[i] = .{
             .name = f.name,
-            .type = builder.Builder(f.type),
+            .type = AnyBuilder(f.type),
             .default_value = null,
             .is_comptime = false,
             .alignment = 0,

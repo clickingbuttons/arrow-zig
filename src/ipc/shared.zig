@@ -2,7 +2,6 @@ const std = @import("std");
 const tags = @import("../tags.zig");
 
 const Array = @import("../array/array.zig").Array;
-pub const buffer_alignment = Array.buffer_alignment;
 
 pub const magic = "ARROW1";
 pub const MessageLen = i32;

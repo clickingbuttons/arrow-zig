@@ -16,7 +16,7 @@ pub const Array = struct {
     tag: tags.Tag,
     name: [:0]const u8,
     allocator: Allocator,
-    // TODO: remove this field, compute from tag
+    // TODO: remove this field, compute from tag and buffers
     length: usize,
     null_count: usize,
     // https://arrow.apache.org/docs/format/Columnar.html#buffer-listing-for-each-layout

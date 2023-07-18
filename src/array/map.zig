@@ -4,7 +4,7 @@
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
-const builder = @import("./builder.zig");
+const AnyBuilder = @import("./lib.zig").Builder;
 
 const Array = array.Array;
 const Allocator = std.mem.Allocator;
@@ -230,8 +230,8 @@ pub fn Builder(comptime Tuple: type) type {
         @compileError("map key type '" ++ @typeName(KeyType) ++ "' cannot be nullable");
     }
     const ValueType = t.Struct.fields[1].type;
-    const KeyBuilder = builder.Builder(KeyType);
-    const ValueBuilder = builder.Builder(ValueType);
+    const KeyBuilder = AnyBuilder(KeyType);
+    const ValueBuilder = AnyBuilder(ValueType);
 
     return BuilderAdvanced(KeyBuilder, ValueBuilder, nullable, Child);
 }

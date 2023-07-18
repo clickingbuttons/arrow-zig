@@ -1,6 +1,9 @@
 const std = @import("std");
-const abi = @import("ffi/abi.zig");
-const sample = @import("sample.zig");
+pub const abi = @import("ffi/abi.zig");
+pub const sample = @import("sample.zig");
+pub const ipc = @import("./ipc/lib.zig");
+pub const Array = @import("./array/array.zig").Array;
+pub const array = @import("./array/lib.zig");
 
 fn sampleRecordBatch2(
     allocator: std.mem.Allocator,
@@ -24,14 +27,7 @@ test {
     _ = @import("ffi/abi.zig");
     _ = @import("ffi/tests.zig");
     _ = @import("tags.zig");
-    _ = @import("array/array.zig");
-    _ = @import("array/flat.zig");
-    _ = @import("array/list.zig");
-    _ = @import("array/struct.zig");
-    _ = @import("array/union.zig");
-    _ = @import("array/dict.zig");
-    _ = @import("array/map.zig");
-    _ = @import("array/builder.zig");
+    _ = @import("array/lib.zig");
     _ = @import("sample.zig");
     _ = @import("ipc/reader.zig");
     _ = @import("ipc/writer.zig");

@@ -55,7 +55,6 @@ pub fn Reader(comptime ReaderType: type) type {
         node_index: usize = 0,
         buffer_index: usize = 0,
         dictionaries: Dictionaries,
-        message_i: usize = 0,
 
         pub fn init(allocator: Allocator, source: ReaderType) !Self {
             return .{
@@ -102,14 +101,6 @@ pub fn Reader(comptime ReaderType: type) type {
                 log.err("expected message to be padded to 8 bytes, got {d}", .{n_read});
                 return IpcError.InvalidLen;
             }
-
-            const fname = try std.fmt.allocPrint(self.allocator, "message{d}.bfbs", .{self.message_i});
-            defer self.allocator.free(fname);
-            const file = try std.fs.cwd().createFile(fname, .{});
-            defer file.close();
-            try file.writeAll(message_buf);
-            try file.sync();
-            self.message_i += 1;
 
             const packed_message = try flat.PackedMessage.init(message_buf);
             log.debug("read {s} message len {d}", .{
@@ -197,7 +188,7 @@ pub fn Reader(comptime ReaderType: type) type {
                     for (0..3) |i| {
                         var src = v.buffers[i].items;
                         if (src.len == 0) continue;
-                        dict_values.buffers[i] = try allocator.alignedAlloc(u8, shared.buffer_alignment, src.len);
+                        dict_values.buffers[i] = try allocator.alignedAlloc(u8, Array.buffer_alignment, src.len);
                         @memcpy(dict_values.buffers[i], src);
                     }
                     res.children = try allocator.alloc(*Array, 1);
@@ -218,7 +209,7 @@ pub fn Reader(comptime ReaderType: type) type {
             compression: ?flat.BodyCompression,
         ) !Array.Buffer {
             // Undocumented, but whatever :)
-            if (size == 0) return try allocator.alignedAlloc(u8, shared.buffer_alignment, 0);
+            if (size == 0) return try allocator.alignedAlloc(u8, Array.buffer_alignment, 0);
             // > Each constituent buffer is first compressed with the indicated
             // > compressor, and then written with the uncompressed length in the first 8
             // > bytes as a 64-bit little-endian signed integer followed by the compressed
@@ -230,7 +221,7 @@ pub fn Reader(comptime ReaderType: type) type {
                 const res: usize = @bitCast(try self.source.readIntLittle(i64));
                 break :brk if (res == -1) size else res;
             } else size;
-            var res = try allocator.alignedAlloc(u8, shared.buffer_alignment, uncompressed_size);
+            var res = try allocator.alignedAlloc(u8, Array.buffer_alignment, uncompressed_size);
             errdefer allocator.free(res);
             const n_read: usize = if (compression) |c| brk: {
                 switch (c.codec) {
@@ -245,7 +236,7 @@ pub fn Reader(comptime ReaderType: type) type {
                         break :brk try stream.reader().readAll(res);
                     },
                 }
-            } else try self.source.readAll(res);
+            } else try self.source.readAll(res); // TODO: check if properly aligned and zero-copy
 
             if (res.len != n_read) {
                 log.err("expected {d} bytes in record batch body, got {any}", .{ res.len, n_read });

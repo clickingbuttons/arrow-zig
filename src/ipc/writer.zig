@@ -16,6 +16,8 @@ const Schema = flat.Schema;
 const IpcError = error{
     ArrayNotDictionary,
 } || shared.IpcError;
+// This is what the C++ impl does "for flatbuffers." Not sure how valid that is...
+const message_alignment = 8;
 
 fn getFieldNodes(accumulator: *std.ArrayList(FieldNode), array: *Array) !void {
     try accumulator.append(FieldNode{
@@ -67,10 +69,7 @@ test "getFieldNodes root" {
     try std.testing.expectEqualSlices(FieldNode, expected_fields, nodes.items);
 }
 
-inline fn getPadding(n: usize) usize {
-    // This is what the C++ impl does "for flatbuffers"
-    // Not sure how valid that is...
-    const alignment = 8;
+inline fn getPadding(comptime alignment: usize, n: usize) usize {
     const mod = @mod(n, alignment);
     if (mod != 0) return alignment - mod;
     return 0;
@@ -89,7 +88,9 @@ fn writeBuffers(
         const b = array.buffers[i];
         if (commit) try writer_.writeAll(b);
         res += b.len;
-        const n_padding = getPadding(b.len);
+        // The C++ implementation uses 8 byte alignment here, but we use 64 to prevent copying
+        // for 64-bit alignment libraries.
+        const n_padding = getPadding(Array.buffer_alignment, b.len);
         res += n_padding;
         if (commit) for (0..n_padding) |_| try writer_.writeByte(0);
 
@@ -97,7 +98,7 @@ fn writeBuffers(
             var offset = brk: {
                 if (a.items.len == 0) break :brk 0;
                 const last = a.getLast();
-                const padding: i64 = @bitCast(getPadding(@bitCast(last.length)));
+                const padding: i64 = @bitCast(getPadding(Array.buffer_alignment, @bitCast(last.length)));
                 break :brk last.offset + last.length + padding;
             };
             try a.append(Buffer{
@@ -124,7 +125,7 @@ test "writeBuffer dict" {
     const expected_buffers = &[_]Buffer{
         .{ .offset = 0, .length = 0 },
         .{ .offset = 0, .length = 16 },
-        .{ .offset = 16, .length = 16 },
+        .{ .offset = 64, .length = 16 },
     };
 
     const schema = try Schema.initFromArray(allocator, dict);
@@ -147,46 +148,46 @@ test "writeBuffer root" {
 
     const expected_buffers = &[_]Buffer{
         .{ .offset = 0, .length = 1 },
-        .{ .offset = 8, .length = 8 },
-        .{ .offset = 16, .length = 1 },
-        .{ .offset = 24, .length = 0 },
-        .{ .offset = 24, .length = 24 },
-        .{ .offset = 48, .length = 1 },
-        .{ .offset = 56, .length = 20 },
-        .{ .offset = 80, .length = 18 },
-        .{ .offset = 104, .length = 1 },
-        .{ .offset = 112, .length = 20 },
-        .{ .offset = 136, .length = 0 },
-        .{ .offset = 136, .length = 18 },
-        .{ .offset = 160, .length = 1 },
-        .{ .offset = 168, .length = 0 },
-        .{ .offset = 168, .length = 24 },
-        .{ .offset = 192, .length = 1 },
-        .{ .offset = 200, .length = 1 },
-        .{ .offset = 208, .length = 16 },
-        .{ .offset = 224, .length = 1 },
-        .{ .offset = 232, .length = 32 },
-        .{ .offset = 264, .length = 4 },
-        .{ .offset = 272, .length = 16 },
-        .{ .offset = 288, .length = 1 },
-        .{ .offset = 296, .length = 12 },
-        .{ .offset = 312, .length = 0 },
-        .{ .offset = 312, .length = 4 },
-        .{ .offset = 320, .length = 4 },
-        .{ .offset = 328, .length = 1 },
-        .{ .offset = 336, .length = 16 },
-        .{ .offset = 352, .length = 1 },
-        .{ .offset = 360, .length = 16 },
-        .{ .offset = 376, .length = 1 },
-        .{ .offset = 384, .length = 4 },
-        .{ .offset = 392, .length = 1 },
-        .{ .offset = 400, .length = 20 },
-        .{ .offset = 424, .length = 0 },
-        .{ .offset = 424, .length = 0 },
-        .{ .offset = 424, .length = 20 },
-        .{ .offset = 448, .length = 20 },
-        .{ .offset = 472, .length = 1 },
-        .{ .offset = 480, .length = 16 },
+        .{ .offset = 64, .length = 8 },
+        .{ .offset = 128, .length = 1 },
+        .{ .offset = 192, .length = 0 },
+        .{ .offset = 192, .length = 24 },
+        .{ .offset = 256, .length = 1 },
+        .{ .offset = 320, .length = 20 },
+        .{ .offset = 384, .length = 18 },
+        .{ .offset = 448, .length = 1 },
+        .{ .offset = 512, .length = 20 },
+        .{ .offset = 576, .length = 0 },
+        .{ .offset = 576, .length = 18 },
+        .{ .offset = 640, .length = 1 },
+        .{ .offset = 704, .length = 0 },
+        .{ .offset = 704, .length = 24 },
+        .{ .offset = 768, .length = 1 },
+        .{ .offset = 832, .length = 1 },
+        .{ .offset = 896, .length = 16 },
+        .{ .offset = 960, .length = 1 },
+        .{ .offset = 1024, .length = 32 },
+        .{ .offset = 1088, .length = 4 },
+        .{ .offset = 1152, .length = 16 },
+        .{ .offset = 1216, .length = 1 },
+        .{ .offset = 1280, .length = 12 },
+        .{ .offset = 1344, .length = 0 },
+        .{ .offset = 1344, .length = 4 },
+        .{ .offset = 1408, .length = 4 },
+        .{ .offset = 1472, .length = 1 },
+        .{ .offset = 1536, .length = 16 },
+        .{ .offset = 1600, .length = 1 },
+        .{ .offset = 1664, .length = 16 },
+        .{ .offset = 1728, .length = 1 },
+        .{ .offset = 1792, .length = 4 },
+        .{ .offset = 1856, .length = 1 },
+        .{ .offset = 1920, .length = 20 },
+        .{ .offset = 1984, .length = 0 },
+        .{ .offset = 1984, .length = 0 },
+        .{ .offset = 1984, .length = 20 },
+        .{ .offset = 2048, .length = 20 },
+        .{ .offset = 2112, .length = 1 },
+        .{ .offset = 2176, .length = 16 },
     };
 
     const schema = try Schema.initFromArray(allocator, batch);
@@ -214,11 +215,6 @@ pub fn Writer(comptime WriterType: type) type {
             };
         }
 
-        inline fn writePadding(self: *Self) !void {
-            const padding = getPadding(self.dest.bytes_written);
-            for (0..padding) |_| try self.dest.writer().writeByte(0);
-        }
-
         /// Writes an aligned message header and returns its offset + length
         fn writeMessage(self: *Self, message: Message) !Block {
             var builder = flatbuffers.Builder.init(self.allocator);
@@ -227,24 +223,16 @@ pub fn Writer(comptime WriterType: type) type {
             const bytes = try builder.finish(packed_offset);
             defer self.allocator.free(bytes);
 
-            const fname = try std.fmt.allocPrint(self.allocator, "message{d}.bfbs", .{self.message_i});
-            defer self.allocator.free(fname);
-            self.message_i += 1;
-            var file = try std.fs.cwd().createFile(fname, .{});
-            defer file.close();
-            try file.writeAll(bytes);
-            try file.sync();
-
             const offset = self.dest.bytes_written;
-            std.debug.assert(@mod(offset, 8) == 0);
+            std.debug.assert(@mod(offset, message_alignment) == 0);
 
-            const n_padding = getPadding(bytes.len);
+            const n_padding = getPadding(message_alignment, bytes.len);
             const len: shared.MessageLen = @intCast(bytes.len + n_padding);
             try self.dest.writer().writeIntLittle(shared.MessageLen, shared.continuation);
             try self.dest.writer().writeIntLittle(shared.MessageLen, len);
             try self.dest.writer().writeAll(bytes);
             for (0..n_padding) |_| try self.dest.writer().writeByte(0);
-            std.debug.assert(@mod(len, 8) == 0);
+            std.debug.assert(@mod(len, message_alignment) == 0);
 
             return .{
                 .offset = @bitCast(offset),

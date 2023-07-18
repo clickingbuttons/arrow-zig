@@ -3,7 +3,7 @@
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
-const builder = @import("./builder.zig");
+const AnyBuilder = @import("./lib.zig").Builder;
 
 const Array = array.Array;
 const log = std.log.scoped(.arrow);
@@ -263,7 +263,7 @@ test "finish" {
 
 pub fn Builder(comptime T: type) type {
     return BuilderAdvanced(
-        builder.Builder(T),
+        AnyBuilder(T),
         AutoContext(T),
         .{ .index = .i32, .nullable = @typeInfo(T) == .Optional },
     );

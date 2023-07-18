@@ -4,7 +4,7 @@
 import sys
 import pyarrow as pa
 
-tb = pa.ipc.open_file("sample2.arrow").read_all()
+tb = pa.ipc.open_file("testdata/sample_written.arrow").read_all()
 
 expected = {
 	"a": [None, 32, 33, 34],

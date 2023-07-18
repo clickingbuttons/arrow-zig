@@ -2,7 +2,7 @@ const std = @import("std");
 const abi = @import("abi.zig");
 const ImportedArray = @import("./import.zig").ImportedArray;
 const array_mod = @import("../array/array.zig");
-const Builder = @import("../array/builder.zig").Builder;
+const Builder = @import("../array/lib.zig").Builder;
 const union_ = @import("../array/union.zig");
 const dict = @import("../array/dict.zig");
 const map = @import("../array/map.zig");
@@ -174,5 +174,10 @@ test "dict import" {
 
 test "map import" {
     var a = try sample.map(allocator);
+    try testImport(a);
+}
+
+test "all import" {
+    var a = try sample.all(allocator);
     try testImport(a);
 }

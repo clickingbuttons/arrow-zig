@@ -2,7 +2,7 @@
 const std = @import("std");
 const array = @import("./array.zig");
 const tags = @import("../tags.zig");
-const builder = @import("./builder.zig");
+const AnyBuilder = @import("./lib.zig").Builder;
 
 const Array = array.Array;
 
@@ -150,7 +150,7 @@ pub fn Builder(comptime Slice: type) type {
         @compileError(@typeName(Slice) ++ " is not a slice or array type");
     }
     const arr_len = if (t == .Array) t.Array.len else 0;
-    const ChildBuilder = builder.Builder(if (t == .Pointer) t.Pointer.child else t.Array.child);
+    const ChildBuilder = AnyBuilder(if (t == .Pointer) t.Pointer.child else t.Array.child);
     return BuilderAdvanced(ChildBuilder, .{ .nullable = nullable, .large = false }, arr_len);
 }
 

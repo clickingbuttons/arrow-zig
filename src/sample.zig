@@ -2,12 +2,11 @@
 const std = @import("std");
 const tags = @import("./tags.zig");
 const Array = @import("./array/array.zig").Array;
-const Builder = @import("./array/builder.zig").Builder;
+const Builder = @import("./array/lib.zig").Builder;
 const FlatBuilder = @import("./array/flat.zig").BuilderAdvanced;
 const StructBuilder = @import("./array/struct.zig").BuilderAdvanced;
 const UnionBuilder = @import("./array/union.zig").BuilderAdvanced;
 const DictBuilder = @import("./array/dict.zig").Builder;
-const MapBuilder = @import("./array/map.zig").Builder;
 
 const Allocator = std.mem.Allocator;
 
@@ -87,11 +86,14 @@ pub fn denseUnion(allocator: Allocator) !*Array {
 }
 
 pub fn sparseUnion(allocator: Allocator) !*Array {
-    const ChildrenBuilders = struct {
-        f: Builder(?f32),
-        i: Builder(?i32),
-    };
-    var b = try UnionBuilder(ChildrenBuilders, .{ .nullable = true, .dense = false }, void).init(allocator);
+    var b = try UnionBuilder(
+        struct {
+            f: Builder(?f32),
+            i: Builder(?i32),
+        },
+        .{ .nullable = true, .dense = false },
+        void,
+    ).init(allocator);
     try b.append(null);
     try b.append(.{ .f = 1 });
     try b.append(.{ .f = 3 });
@@ -111,7 +113,7 @@ pub fn dict(allocator: Allocator) !*Array {
 pub fn map(allocator: Allocator) !*Array {
     const V = i32;
     const T = struct { []const u8, ?V };
-    var b = try MapBuilder(?T).init(allocator);
+    var b = try Builder(?T).init(allocator);
     try b.append(null);
     try b.append(.{ "hello", 1 });
     try b.appendSlice(&[_]T{ .{ "arrow", 2 }, .{ "map", null } });

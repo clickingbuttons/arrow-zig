@@ -12,13 +12,14 @@ const ImportError = error{
     BufferLenMismatch,
 };
 
+/// This type is necessary to properly manage memory.
 pub const ImportedArray = struct {
     const Self = @This();
 
     array: *Array,
 
     // We have to store this arr and schema for our whole lifetime so we can call their release functions.
-    // The alternative is to copy the schema and array data out but that's slower for large arrays
+    // TODO: only store release function pointers and recreate these at release time to save on memory
     abi_schema: abi.Schema,
     abi_arr: abi.Array,
 
