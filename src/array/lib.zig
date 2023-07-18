@@ -1,7 +1,6 @@
 const std = @import("std");
 pub const dict = @import("dict.zig");
 pub const flat = @import("flat.zig");
-pub const list = @import("list.zig");
 pub const map = @import("map.zig");
 pub const struct_ = @import("struct.zig");
 pub const union_ = @import("union.zig");
@@ -27,13 +26,13 @@ fn Builder2(comptime ctx: type, comptime T: type) type {
         .Pointer => |p| switch (p.size) {
             .Slice => switch (p.child) {
                 u8, ?u8 => flat.Builder(T),
-                else => list.Builder(T),
+                else => @compileError("unsupported builder type " ++ @typeName(T)),
             },
             else => @compileError("unsupported builder type " ++ @typeName(T)),
         },
         .Array => |a| switch (a.child) {
             u8, ?u8 => flat.Builder(T),
-            else => list.Builder(T),
+            else => @compileError("unsupported builder type " ++ @typeName(T)),
         },
         .Optional => |o| Builder2(o.child, T),
         .Struct => if (comptime isMapLike(ctx)) map.Builder(T) else struct_.Builder(T),
@@ -50,7 +49,6 @@ pub fn Builder(comptime T: type) type {
 test {
     _ = @import("./array.zig");
     _ = @import("./flat.zig");
-    _ = @import("./list.zig");
     _ = @import("./struct.zig");
     _ = @import("./union.zig");
     _ = @import("./dict.zig");

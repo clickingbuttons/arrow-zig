@@ -39,26 +39,6 @@ pub fn variableFlat(allocator: Allocator) !*Array {
     return try b.finish();
 }
 
-pub fn list(allocator: Allocator) !*Array {
-    const T = i16;
-    var b = try Builder(?[]const T).init(allocator);
-    try b.append(null);
-    try b.append(&[_]T{ 1, 2, 3 });
-    try b.append(&[_]T{ 4, 5, 6 });
-    try b.append(&[_]T{ 7, 8, 9 });
-    return try b.finish();
-}
-
-pub fn fixedList(allocator: Allocator) !*Array {
-    const T = i16;
-    var b = try Builder(?[3]T).init(allocator);
-    try b.append(null);
-    try b.append([_]T{ 1, 2, 3 });
-    try b.append([_]T{ 4, 5, 6 });
-    try b.append([_]T{ 7, 8, 9 });
-    return try b.finish();
-}
-
 pub fn struct_(allocator: Allocator) !*Array {
     const T = struct {
         a: ?i32,
@@ -124,10 +104,7 @@ pub fn map(allocator: Allocator) !*Array {
 pub fn all(allocator: Allocator) !*Array {
     const arr_children = [_]*Array{
         try flat(allocator),
-        try fixedList(allocator),
         try variableFlat(allocator),
-        try list(allocator),
-        try fixedList(allocator),
         try struct_(allocator),
         try denseUnion(allocator),
         try sparseUnion(allocator),

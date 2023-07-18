@@ -204,22 +204,6 @@ test "init + deinit string" {
     try std.testing.expectEqual(@as(usize, 3), b.hashmap.count());
 }
 
-const list = @import("./list.zig");
-test "init + deinit list" {
-    const T = ?[]const []const u8;
-    var b = try BuilderAdvanced(
-        list.Builder(T),
-        AutoContext(T),
-        .{ .index = .i8, .nullable = false },
-    ).init(std.testing.allocator);
-    defer b.deinit();
-
-    try b.append(null);
-    try b.append(&[_][]const u8{ "hello", "goodbye" });
-
-    try std.testing.expectEqual(@as(usize, 2), b.hashmap.count());
-}
-
 const struct_ = @import("./struct.zig");
 test "init + deinit struct" {
     const T = struct {
