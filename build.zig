@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) !void {
     );
     const ffi_test = b.addSystemCommand(&[_][]const u8{ "python", "test_ffi.py" });
     ffi_test.step.dependOn(&run_main_tests.step);
+    ffi_test.step.dependOn(b.getInstallStep());
     const ipc_test = b.addSystemCommand(&[_][]const u8{ "python", "test_ipc.py" });
     ipc_test.step.dependOn(&run_main_tests.step);
     integration_test_step.dependOn(&ipc_test.step);
