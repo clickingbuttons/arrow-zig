@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addSharedLibrary(.{
-        .name = name,
+        .name = "arrow-zig", // Avoid naming conflict with libarrow
         .root_source_file = .{ .path = path },
         .target = target,
         .optimize = optimize,
