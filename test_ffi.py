@@ -1,6 +1,6 @@
 #!/bin/env python
 # Requires pyarrow.
-# `zig build` -> run this
+
 from os import path
 import sys
 from ctypes import *

@@ -198,6 +198,7 @@ pub const Tag = union(enum) {
         try std.testing.expectEqual(Tag.Int, Tag.fromPrimitive(?i32, .{ .nullable = true }));
         try std.testing.expectEqual(Tag.Binary, Tag.fromPrimitive([]u8, .{ .nullable = false }));
         try std.testing.expectEqual(Tag.Binary, Tag.fromPrimitive([]?u8, .{ .nullable = true }));
+        try std.testing.expectEqual(Tag.FixedBinary, Tag.fromPrimitive([3]u8, .{ .nullable = false }));
     }
 
     pub fn Primitive(comptime self: Self) type {

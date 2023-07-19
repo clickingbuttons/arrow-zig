@@ -19,7 +19,7 @@ pub const ImportedArray = struct {
     array: *Array,
 
     // We have to store this arr and schema for our whole lifetime so we can call their release functions.
-    // TODO: only store release function pointers and recreate these at release time to save on memory
+    // TODO: find a better way
     abi_schema: abi.Schema,
     abi_arr: abi.Array,
 

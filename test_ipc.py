@@ -1,6 +1,6 @@
 #!/bin/env python
 # Requires pyarrow.
-# `zig build test` -> run this
+
 import sys
 import pyarrow as pa
 

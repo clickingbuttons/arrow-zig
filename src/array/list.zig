@@ -93,7 +93,13 @@ pub fn BuilderAdvanced(
                     else => |t| @compileError("unsupported pointer type " ++ @tagName(t)),
                 },
                 .Array => |a| {
-                    std.debug.assert(a.len == fixed_len);
+                    if (a.len != fixed_len)
+                        @compileError(
+                            std.fmt.comptimePrint(
+                                "expected array of len {d} but got array of len {d}",
+                                .{ fixed_len, a.len },
+                            ),
+                        );
                     for (value) |v| try self.child.append(v);
                 },
                 else => |t| @compileError("unsupported append type " ++ @tagName(t)),

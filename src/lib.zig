@@ -1,6 +1,7 @@
 const std = @import("std");
-pub const abi = @import("ffi/abi.zig");
-pub const sample = @import("sample.zig");
+pub const ffi = @import("./ffi/lib.zig");
+pub const abi = ffi.abi;
+pub const sample = @import("./sample.zig");
 pub const ipc = @import("./ipc/lib.zig");
 pub const Array = @import("./array/array.zig").Array;
 pub const array = @import("./array/lib.zig");

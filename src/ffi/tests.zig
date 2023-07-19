@@ -17,7 +17,10 @@ fn testExport(array: *Array, comptime format_string: []const u8) !void {
 
     var abi_schema = try abi.Schema.init(array);
     defer abi_schema.release.?(&abi_schema);
-    try std.testing.expectEqualStrings(format_string ++ "\x00", abi_schema.format[0 .. format_string.len + 1]);
+    try std.testing.expectEqualStrings(
+        format_string ++ "\x00",
+        abi_schema.format[0 .. format_string.len + 1],
+    );
 }
 
 fn testImport(array: *Array) !void {

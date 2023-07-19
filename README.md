@@ -58,11 +58,7 @@ Notes:
 
 ### Build arrays
 
-The default `Builder` can map Zig types with reasonable defaults except for Dictionary types. You can import it like this:
-```zig
-const Builder = @import("arrow").array.Builder;
-```
-
+The default `Builder` can map Zig types with reasonable defaults except for Dictionary types. You can use it like this:
 ```zig
 var b = try Builder(?i16).init(allocator);
 try b.append(null);
@@ -84,10 +80,6 @@ error: expected type 'i16', found '@TypeOf(null)'
 
 Dictionary types must use an explicit builder.
 ```zig
-const DictBuilder = @import("arrow").array.dict.Builder;
-```
-
-```zig
 var b = try DictBuilder(?[]const u8).init(allocator);
 try b.appendNull();
 try b.append("hello");
@@ -95,7 +87,7 @@ try b.append("there");
 try b.append("friend");
 ```
 
-You can customize exactly how the type maps to Arrow with each type's `BuilderAdvanced`. For example to build a sparse union of structs:
+You can customize exactly how to build Arrow types with each type's `BuilderAdvanced`. For example to build a sparse union of nullable structs:
 ```zig
 var b = try UnionBuilder(
     struct {
@@ -111,19 +103,24 @@ try b.append(.{ .f = 3 });
 try b.append(.{ .i = 5 });
 ```
 
-You can view [sample.zig](./src/sample.zig) which has an example for all supported types.
+You can view [sample.zig](./src/sample.zig) which has examples for all supported types.
 
 ### FFI
 
-Arrow has a [C ABI](https://arrow.apache.org/docs/format/CDataInterface.html) that allows in-memory array importing and exporting that only copies metadata.
+Arrow has a [C ABI](https://arrow.apache.org/docs/format/CDataInterface.html) that allows importing and exporting arrays over an FFI boundary by only copying metadata.
 
 #### Export
 
 If you have a normal `Array` you can export it to a `abi.Schema` and `abi.Array` to share the memory with other code (i.e. scripting languages). When you do so, that code is responsible for calling `abi.Schema.release(&schema)` and `abi.Array.release(&array)` to free memory.
 
 ```zig
-var abi_schema = try abi.Schema.init(array);
+const array = try arrow.sample.all(allocator);
+errdefer array.deinit();
+
+// Note: these are stack allocated.
 var abi_arr = try abi.Array.init(array);
+var abi_schema = try abi.Schema.init(array);
+
 externFn(&abi_schema, &abi_arr);
 ```
 
@@ -132,10 +129,11 @@ externFn(&abi_schema, &abi_arr);
 If you have a `abi.Schema` and `abi.Array` you can transform them to an `ImportedArray` that contains a normal `Array`. Be a good steward and free the memory with `imported.deinit()`.
 
 ```zig
-const array = sample.all();
+const array = try arrow.sample.all(allocator);
+
 var abi_schema = try abi.Schema.init(array);
 var abi_arr = try abi.Array.init(array);
-var imported = try ImportedArray.init(allocator, abi_arr, abi_schema);
+var imported = try arrow.ffi.ImportedArray.init(allocator, abi_arr, abi_schema);
 defer imported.deinit();
 ```
 
@@ -146,16 +144,17 @@ Array has an [IPC format](https://arrow.apache.org/docs/format/Columnar.html#ser
 I cannot in good faith recommend using this format for the following reasons:
 
 1. [Array types](#Usage) are complicated and difficult to generically map to other type systems.
-2. Despite claiming to be zero-copy, if an array's buffer uses compression it must be copied. This implementation will also copy is its alignment is not 64 (C++ implementation uses 8).
+2. Despite claiming to be zero-copy, if an array's buffer uses compression it must be copied. This implementation will also copy is its alignment is not 64 (the C++ implementation and most files use 8).
 3. Post-compression size savings compared to CSV are marginal.
 4. Poor backwards compatability. There have been 5 versions of the format, most undocumented, with multiple breaking changes.
 
 I also have the following gripes from implementing it:
 
-1. Poor existing tooling. Tools cannot inspect individual messages and have poor error messages. Despite the message format being designed for streaming existing tools work on the entire file at once.
-2. Poor documentation. The upstream [`File.fbs`](https://github.com/apache/arrow/blob/main/format/File.fbs) has numerous **incorrect** comments.
-3. The message custom metadata that would make the format more useful than just shared `ffi` memory is inaccessible in most implementations (including this one) since they are justifiably focused on record batches.
-4. Existing implementations do not support reading/writing record batches with different schemas.
+1. Poor existing tooling. Tools cannot inspect individual messages and have poor error messages.
+2. Despite the message format being designed for streaming existing tools work on the entire file at once.
+3. Poor documentation. The upstream [`File.fbs`](https://github.com/apache/arrow/blob/main/format/File.fbs) has numerous **incorrect** comments.
+4. The message custom metadata that would make the format more useful than just shared `ffi` memory is inaccessible in most implementations (including this one) since they are justifiably focused on record batches.
+5. Existing implementations do not support reading/writing record batches with different schemas.
 
 This implementation is only provided as a way to dump normal `Array`s to disk for later inspection.
 
@@ -181,7 +180,7 @@ If feeling daring, you can use the streaming API of `ipc.reader.Reader(ReaderTyp
 You can write record batches of a normal `Arrow` array `ipc.writer.fileWriter`:
 
 ```zig
-const batch = try sample.all(std.testing.allocator);
+const batch = try arrow.sample.all(std.testing.allocator);
 try batch.toRecordBatch("record batch");
 defer batch.deinit();
 

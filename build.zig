@@ -4,11 +4,28 @@ pub const name = "arrow";
 const path = "src/lib.zig";
 
 pub fn build(b: *std.Build) !void {
-    // Expose to zig dependents
-    _ = b.addModule(name, .{ .source_file = .{ .path = path } });
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const flatbuffers_dep = b.dependency("flatbuffers-zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const flatbuffers_mod = flatbuffers_dep.module("flatbuffers");
+
+    const lz4 = b.dependency("lz4", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const lz4_mod = lz4.module("lz4");
+    // Expose to zig dependents
+    const module = b.addModule(name, .{
+        .source_file = .{ .path = path },
+        .dependencies = &.{
+            .{ .name = "flatbuffers", .module = flatbuffers_mod },
+            .{ .name = "lz4", .module = lz4_mod },
+        },
+    });
 
     const lib = b.addSharedLibrary(.{
         .name = "arrow-zig", // Avoid naming conflict with libarrow
@@ -18,28 +35,14 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(lib);
 
-    const flatbuffers_dep = b.dependency("flatbuffers-zig", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const flatbuffers_mod = flatbuffers_dep.module("flatbuffers");
-    lib.addModule("flatbuffers", flatbuffers_mod); // For generated files to use lib
-
-    const lz4 = b.dependency("lz4", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const lz4_mod = lz4.module("lz4");
-    lib.addModule("lz4", lz4_mod);
-
     const test_step = b.step("test", "Run library tests");
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = path },
         .target = target,
         .optimize = optimize,
     });
-    main_tests.addModule("flatbuffers", flatbuffers_mod); // For generated files to use lib
     main_tests.addModule("lz4", lz4_mod);
+    main_tests.addModule("flatbuffers", flatbuffers_mod);
     const run_main_tests = b.addRunArtifact(main_tests);
     test_step.dependOn(&run_main_tests.step);
 
@@ -54,4 +57,14 @@ pub fn build(b: *std.Build) !void {
     ipc_test.step.dependOn(&run_main_tests.step);
     integration_test_step.dependOn(&ipc_test.step);
     integration_test_step.dependOn(&ffi_test.step);
+
+    const example_test_step = b.step("test-examples", "Run example tests");
+    const example_tests = b.addTest(.{
+        .root_source_file = .{ .path = "./examples/all.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    example_tests.addModule("arrow", module);
+    const run_example_tests = b.addRunArtifact(example_tests);
+    example_test_step.dependOn(&run_example_tests.step);
 }

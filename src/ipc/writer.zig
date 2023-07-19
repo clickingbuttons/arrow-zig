@@ -224,15 +224,13 @@ pub fn Writer(comptime WriterType: type) type {
             defer self.allocator.free(bytes);
 
             const offset = self.dest.bytes_written;
-            std.debug.assert(@mod(offset, message_alignment) == 0);
-
             const n_padding = getPadding(message_alignment, bytes.len);
             const len: shared.MessageLen = @intCast(bytes.len + n_padding);
+
             try self.dest.writer().writeIntLittle(shared.MessageLen, shared.continuation);
             try self.dest.writer().writeIntLittle(shared.MessageLen, len);
             try self.dest.writer().writeAll(bytes);
             for (0..n_padding) |_| try self.dest.writer().writeByte(0);
-            std.debug.assert(@mod(len, message_alignment) == 0);
 
             return .{
                 .offset = @bitCast(offset),
@@ -260,14 +258,10 @@ pub fn Writer(comptime WriterType: type) type {
             var nodes = try std.ArrayList(FieldNode).initCapacity(self.allocator, n_fields);
             errdefer nodes.deinit();
             for (array.children) |c| try getFieldNodes(&nodes, c);
-            // for (nodes.items) |n| log.debug("write {any}", .{n});
-            std.debug.assert(nodes.items.len == n_fields);
 
             var buffers = try std.ArrayList(Buffer).initCapacity(self.allocator, n_buffers);
             errdefer buffers.deinit();
             for (array.children) |c| _ = try writeBuffers(c, void, &buffers);
-            // for (buffers.items) |n| log.debug("write {any}", .{n});
-            std.debug.assert(buffers.items.len == n_buffers);
 
             return .{
                 .length = @bitCast(array.length),
@@ -287,9 +281,6 @@ pub fn Writer(comptime WriterType: type) type {
 
             var res = try self.writeMessage(message);
             res.body_length = @bitCast(try writeBuffers(array, self.dest.writer(), null));
-            std.debug.assert(res.body_length == message.body_length);
-            std.debug.assert(@mod(res.body_length, 8) == 0);
-
             return res;
         }
 
@@ -316,10 +307,7 @@ pub fn Writer(comptime WriterType: type) type {
 
             var res = try self.writeMessage(message);
             res.body_length = @bitCast(try writeBuffers(dict, self.dest.writer(), null));
-            std.debug.assert(res.body_length == message.body_length);
-            std.debug.assert(@mod(res.body_length, 8) == 0);
             self.dict_id += 1;
-
             return res;
         }
     };

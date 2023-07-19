@@ -7,6 +7,12 @@ const export_ = @import("export.zig");
 pub const Schema = extern struct {
     const Self = @This();
 
+    pub const PrivateData = struct {
+        allocator: Allocator,
+        name_len: usize,
+        abi_format_on_heap: bool,
+    };
+
     format: [*:0]const u8, // Managed
     name: ?[*:0]const u8 = null, // Managed
     metadata: ?[*:0]const u8 = null, // Managed
@@ -26,25 +32,9 @@ pub const Schema = extern struct {
         std.debug.assert(@sizeOf(@This()) == 72);
     }
 
-    // Creates a new abi.Schema from a abi.Array. Caller owns abi.Schema and must call `.release`.
+    /// Creates a new abi.Schema from a abi.Array. Caller owns abi.Schema and must call `.release`.
     pub fn init(array: *array_mod.Array) !Self {
-        const layout = array.tag.abiLayout();
-        const n_children = if (layout == .Dictionary) 0 else array.children.len;
-        const Exporter = export_.schema;
-
-        return .{
-            .format = try array.tag.abiFormat(array.allocator, n_children),
-            .name = if (array.name.len == 0) null else try array.allocator.dupeZ(u8, array.name),
-            .metadata = null,
-            .flags = .{
-                .nullable = array.tag.nullable(),
-            },
-            .n_children = @bitCast(n_children),
-            .children = try Exporter.children(array, n_children),
-            .dictionary = try Exporter.dictionary(array, layout),
-            .release = Exporter.release,
-            .private_data = @ptrCast(array),
-        };
+        return export_.schema.init(array);
     }
 
     pub fn deinit(self: *Self) void {
@@ -136,25 +126,9 @@ pub const Array = extern struct {
         std.debug.assert(@sizeOf(@This()) == 80);
     }
 
-    // Moves array.Array into a new abi.Array. Caller owns abi.Array and must call `.release`.
+    /// Moves array.Array into a new abi.Array. Caller owns abi.Array and must call `.release`.
     pub fn init(array: *array_mod.Array) !Self {
-        const layout = array.tag.abiLayout();
-        const n_buffers = layout.nBuffers();
-        const n_children = if (layout == .Dictionary) 0 else array.children.len;
-        const Exporter = export_.array;
-
-        return .{
-            .length = @bitCast(array.length),
-            .null_count = @bitCast(array.null_count),
-            .offset = 0,
-            .n_buffers = @bitCast(n_buffers),
-            .n_children = @bitCast(n_children),
-            .buffers = try Exporter.buffers(array, n_buffers),
-            .children = try Exporter.children(array, n_children),
-            .dictionary = try Exporter.dictionary(array, layout),
-            .release = Exporter.release,
-            .private_data = @ptrCast(array),
-        };
+        return export_.array.init(array);
     }
 
     pub fn deinit(self: *Self) void {

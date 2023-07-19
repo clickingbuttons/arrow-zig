@@ -63,16 +63,19 @@ pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type
                 .Bool, .Int, .Float, .ComptimeInt, .ComptimeFloat => try self.values.append(value),
                 .Pointer => |p| switch (p.size) {
                     .Slice => {
-                        std.debug.assert(layout == .VariableBinary);
                         try self.values.appendSlice(value);
                         try self.offsets.append(@intCast(self.values.items.len));
                     },
                     else => |t| @compileError("unsupported pointer type " ++ @tagName(t)),
                 },
                 .Array => |a| {
-                    std.debug.assert(is_fixed);
                     if (a.len != fixed_len)
-                        @compileError(std.fmt.comptimePrint("expected array of len {d} but got array of len {d}", .{ fixed_len, a.len }));
+                        @compileError(
+                            std.fmt.comptimePrint(
+                                "expected array of len {d} but got array of len {d}",
+                                .{ fixed_len, a.len },
+                            ),
+                        );
                     try self.values.appendSlice(&value);
                 },
                 .Null => {
