@@ -27,8 +27,8 @@ jobs:
         uses: actions/configure-pages@v2
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.11.0-dev.3937+78eb3c561
-      - run: zig build-lib src/lib.zig -femit-docs=docs
+          version: 0.11.0
+      - run: zig build-lib src/lib.zig -femit-docs=docs -fno-emit-bin
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1
         with:

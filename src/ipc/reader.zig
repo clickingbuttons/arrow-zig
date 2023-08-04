@@ -226,7 +226,7 @@ pub fn Reader(comptime ReaderType: type) type {
             const n_read: usize = if (compression) |c| brk: {
                 switch (c.codec) {
                     .lz4__frame => {
-                        var stream = lz4.decompressStream(self.arena.allocator(), self.source);
+                        var stream = lz4.decompressStream(self.arena.allocator(), self.source, true);
                         defer stream.deinit();
                         break :brk try stream.reader().readAll(res);
                     },

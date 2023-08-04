@@ -1,15 +1,15 @@
 .{
 	.name = "arrow-zig",
-	.version = "0.0.1",
+	.version = "0.0.2",
 
 	.dependencies = .{
 		.@"flatbuffers-zig" = .{
-			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/0.0.1.tar.gz",
-			.hash = "12208d20385de50fd7f68519e2f485639df1b22e7dbe9417a774833fe5501744121a",
+			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/0.0.2.tar.gz",
+			.hash = "12209f877dd1b9d95905f1de79f41249df344fbd2700510196978df4af94e0abb6f2"
 		},
 		.lz4 = .{
-			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.3.tar.gz",
-			.hash = "12202bb31c32e2669ab9700627c5cc52e79b85b08397467d9a99637bff8cffd77a1b",
+			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.4.tar.gz",
+			.hash = "12207e29fd690e26b57091f92181c5fe1cc88b9b908aecff98ca0773bdc45ec7decf",
 		},
 	}
 }
