@@ -2,7 +2,6 @@
 
 ![zig-version](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fclickingbuttons%2Farrow-zig%2Fmaster%2F.github%2Fworkflows%2Ftest.yml&query=%24.jobs.test.steps%5B1%5D.with.version&label=zig-version)
 ![tests](https://github.com/clickingbuttons/arrow-zig/actions/workflows/test.yml/badge.svg)
-[![docs](https://github.com/clickingbuttons/arrow-zig/actions/workflows/publish_docs.yml/badge.svg)](https://clickingbuttons.github.io/arrow-zig)
 
 Library to build Arrow arrays from Zig primitives and read/write them to FFI and IPC formats.
 
