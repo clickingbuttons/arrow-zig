@@ -138,24 +138,18 @@ defer imported.deinit();
 
 ### IPC
 
-Array has an [IPC format](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc) to transfer Arrays with zero-copy (unless you add compression or require different alignment). It has a [file format](https://github.com/apache/arrow/blob/main/format/File.fbs) as well.
+Array has a streaming [IPC format](https://arrow.apache.org/docs/format/Columnar.html#serialization-and-interprocess-communication-ipc) to transfer Arrays with zero-copy (unless you add compression or require different alignment). It has a [file format](https://github.com/apache/arrow/blob/main/format/File.fbs) as well.
 
-I cannot in good faith recommend using this format for the following reasons:
+Before using it over CSV, beware that:
 
-1. [Array types](#Usage) are complicated and difficult to generically map to other type systems.
-2. Despite claiming to be zero-copy, if an array's buffer uses compression it must be copied. This implementation will also copy is its alignment is not 64 (the C++ implementation and most files use 8).
-3. Post-compression size savings compared to CSV are marginal.
-4. Poor backwards compatability. There have been 5 versions of the format, most undocumented, with multiple breaking changes.
+1. There have been 5 versions of the format, mostly undocumented, with multiple breaking changes.
+2. Although designed for streaming, most implementations buffer all messages. This means if you want to use other tools like `pyarrow` file sizes must remain small enough to fit in memory.
+3. Size savings compared to CSV are marginal after compression.
+4. If an array's buffer uses compression then reading is NOT zero-copy. Additionally, this implementation will have to copy misaligned data in order to align it. The C++ implementation uses 8 byte alignment while this implementation uses [the spec's recommended 64 byte alignment](https://arrow.apache.org/docs/format/Columnar.html#buffer-alignment-and-padding).
+5. The message custom metadata that would make the format more useful for querying is inaccessible in most implementations, including this one.
+6. Existing implementations do not support reading/writing record batches with different schemas.
 
-I also have the following gripes from implementing it:
-
-1. Poor existing tooling. Tools cannot inspect individual messages and have poor error messages.
-2. Despite the message format being designed for streaming existing tools work on the entire file at once.
-3. Poor documentation. The upstream [`File.fbs`](https://github.com/apache/arrow/blob/main/format/File.fbs) has numerous **incorrect** comments.
-4. The message custom metadata that would make the format more useful than just shared `ffi` memory is inaccessible in most implementations (including this one) since they are justifiably focused on record batches.
-5. Existing implementations do not support reading/writing record batches with different schemas.
-
-This implementation is only provided as a way to dump normal `Array`s to disk for later inspection.
+This implementation is most useful as a way  to dump normal `Array`s to disk for later inspection.
 
 #### Read
 
@@ -172,11 +166,11 @@ while (try ipc_reader.nextBatch()) |rb| {
 }
 ```
 
-If feeling daring, you can use the streaming API of `ipc.reader.Reader(ReaderType)`.
+You can read from other streams via `ipc.reader.Reader(YourReaderType)`.
 
 #### Write
 
-You can write record batches of a normal `Arrow` array `ipc.writer.fileWriter`:
+You can write a struct `arrow.Array` to record batches with `ipc.writer.fileWriter`:
 
 ```zig
 const batch = try arrow.sample.all(std.testing.allocator);
@@ -190,4 +184,4 @@ try ipc_writer.write(batch);
 try ipc_writer.finish();
 ```
 
-If feeling daring, you can use the streaming API of `ipc.writer.Writer(WriterType)`.
+You can write to other streams via `ipc.writer.Writer(YourWriterType)`.
