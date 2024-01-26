@@ -1,5 +1,4 @@
 const std = @import("std");
-const tags = @import("../tags.zig");
 
 const Array = @import("../array/array.zig").Array;
 

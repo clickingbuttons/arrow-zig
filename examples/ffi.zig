@@ -5,7 +5,7 @@ const abi = arrow.ffi.abi;
 const allocator = std.testing.allocator;
 
 test "ffi export" {
-    const array = try arrow.sample.all(allocator);
+    const array = try arrow.sample_arrays.all(allocator);
     errdefer array.deinit();
 
     // Note: these are stack allocated.
@@ -20,7 +20,7 @@ test "ffi export" {
 }
 
 test "ffi import" {
-    const array = try arrow.sample.all(allocator);
+    const array = try arrow.sample_arrays.all(allocator);
 
     var abi_schema = try abi.Schema.init(array);
     var abi_arr = try abi.Array.init(array);

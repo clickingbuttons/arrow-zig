@@ -5,7 +5,7 @@ const std = @import("std");
 const types = @import("lib.zig");
 const IpcError = @import("../shared.zig").IpcError;
 const Array = @import("../../array/array.zig").Array;
-const sample = @import("../../sample.zig");
+const arrays = @import("../../sample_arrays.zig");
 
 /// ----------------------------------------------------------------------
 /// A Schema describes the columns in a row batch
@@ -315,7 +315,7 @@ test "initFromArray" {
         },
     };
 
-    const batch = try sample.all(std.testing.allocator);
+    const batch = try arrays.all(std.testing.allocator);
     defer batch.deinit();
     const schema: Schema = try Schema.initFromArray(std.testing.allocator, batch);
     defer schema.deinit(std.testing.allocator);

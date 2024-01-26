@@ -1,8 +1,9 @@
 // Sparse + dense unions. Prefer dense.
 const std = @import("std");
-const tags = @import("../tags.zig");
 const Array = @import("./array.zig").Array;
 const AnyBuilder = @import("./lib.zig").Builder;
+
+const Tag = Array.Tag;
 
 // Per spec
 pub const TypeId = i8;
@@ -55,7 +56,7 @@ fn MakeAppendType(comptime ChildrenBuilders: type, comptime nullable: bool) type
 
 pub fn BuilderAdvanced(
     comptime ChildrenBuilders: type,
-    comptime opts: tags.UnionOptions,
+    comptime opts: Tag.UnionOptions,
     comptime UnionType: type,
 ) type {
     const AppendType = if (UnionType != void) UnionType else MakeAppendType(ChildrenBuilders, opts.nullable);
@@ -152,7 +153,7 @@ pub fn BuilderAdvanced(
             }
             var res = try Array.init(self.allocator);
             res.* = .{
-                .tag = tags.Tag{ .Union = opts },
+                .tag = Tag{ .Union = opts },
                 .name = @typeName(AppendType) ++ " builder",
                 .allocator = self.allocator,
                 .length = self.types.items.len,

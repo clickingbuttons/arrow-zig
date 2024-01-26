@@ -4,127 +4,6 @@ const flat = @import("array/flat.zig");
 
 const log = std.log.scoped(.arrow);
 
-pub const AbiError = error{
-    InvalidFormatString,
-};
-
-pub const NullableOptions = struct {
-    nullable: bool,
-};
-
-pub const IntOptions = struct {
-    const Self = @This();
-    pub const BitWidth = enum {
-        _8,
-        _16,
-        _32,
-        _64,
-    };
-    nullable: bool,
-    signed: bool,
-    bit_width: BitWidth,
-};
-
-pub const FloatOptions = struct {
-    pub const BitWidth = enum {
-        _16,
-        _32,
-        _64,
-    };
-    nullable: bool,
-    bit_width: BitWidth,
-};
-
-pub const BinaryOptions = struct {
-    nullable: bool,
-    large: bool = false,
-    utf8: bool = false,
-};
-
-pub const FixedBinaryOptions = struct {
-    nullable: bool,
-    fixed_len: i32,
-};
-
-pub const ListOptions = struct {
-    nullable: bool,
-    large: bool = false,
-};
-
-pub const FixedListOptions = struct {
-    nullable: bool,
-    fixed_len: i32,
-    // large: bool = false,
-};
-
-pub const UnionOptions = struct {
-    nullable: bool, // Just used for zig type safety.
-    dense: bool = true,
-};
-
-pub const DictOptions = struct {
-    pub const Index = enum {
-        i8,
-        i16,
-        i32,
-
-        const Self = @This();
-
-        // i64, // Currently zig hashmaps use u32s for capacity.
-        pub fn Type(comptime self: Self) type {
-            return switch (self) {
-                .i32 => i32,
-                .i16 => i16,
-                .i8 => i8,
-            };
-        }
-    };
-
-    index: Index,
-};
-
-pub const DateOptions = struct {
-    nullable: bool,
-    unit: enum {
-        day, // i32
-        millisecond, // i64
-    },
-};
-
-const TimeUnit = enum {
-    second, // i32
-    millisecond, // i32
-    microsecond, // i64
-    nanosecond, // i64
-
-    pub fn bitWidth(self: @This()) i32 {
-        return switch (self) {
-            .second, .millisecond => 32,
-            .microsecond, .nanosecond => 64,
-        };
-    }
-};
-
-pub const TimeOptions = struct {
-    nullable: bool,
-    unit: TimeUnit,
-};
-
-pub const TimestampOptions = struct {
-    nullable: bool,
-    unit: TimeUnit,
-    timezone: [:0]const u8,
-};
-
-pub const IntervalOptions = struct {
-    nullable: bool,
-    unit: enum {
-        year_month,
-        day_time,
-        month_day_nanosecond,
-    },
-};
-
 pub const Tag = union(enum) {
     Null,
     Bool: NullableOptions,
@@ -146,6 +25,125 @@ pub const Tag = union(enum) {
     // Decimal256(u8, i8),
     Map: NullableOptions,
     // RunEndEncoded(FieldRef, FieldRef),
+
+    pub const AbiError = error{
+        InvalidFormatString,
+    };
+
+    pub const NullableOptions = struct {
+        nullable: bool,
+    };
+
+    pub const IntOptions = struct {
+        const Self = @This();
+        pub const BitWidth = enum {
+            _8,
+            _16,
+            _32,
+            _64,
+        };
+        nullable: bool,
+        signed: bool,
+        bit_width: BitWidth,
+    };
+
+    pub const FloatOptions = struct {
+        pub const BitWidth = enum {
+            _16,
+            _32,
+            _64,
+        };
+        nullable: bool,
+        bit_width: BitWidth,
+    };
+
+    pub const BinaryOptions = struct {
+        nullable: bool,
+        large: bool = false,
+        utf8: bool = false,
+    };
+
+    pub const FixedBinaryOptions = struct {
+        nullable: bool,
+        fixed_len: i32,
+    };
+
+    pub const ListOptions = struct {
+        nullable: bool,
+        large: bool = false,
+    };
+
+    pub const FixedListOptions = struct {
+        nullable: bool,
+        fixed_len: i32,
+        // large: bool = false,
+    };
+
+    pub const UnionOptions = struct {
+        nullable: bool, // Just used for zig type safety.
+        dense: bool = true,
+    };
+
+    pub const DictOptions = struct {
+        pub const Index = enum {
+            i8,
+            i16,
+            i32,
+
+            // i64, // Currently zig hashmaps use u32s for capacity.
+            pub fn Type(comptime self: @This()) type {
+                return switch (self) {
+                    .i32 => i32,
+                    .i16 => i16,
+                    .i8 => i8,
+                };
+            }
+        };
+
+        index: Index,
+    };
+
+    pub const DateOptions = struct {
+        nullable: bool,
+        unit: enum {
+            day, // i32
+            millisecond, // i64
+        },
+    };
+
+    pub const TimeUnit = enum {
+        second, // i32
+        millisecond, // i32
+        microsecond, // i64
+        nanosecond, // i64
+
+        pub fn bitWidth(self: @This()) i32 {
+            return switch (self) {
+                .second, .millisecond => 32,
+                .microsecond, .nanosecond => 64,
+            };
+        }
+    };
+
+    pub const TimeOptions = struct {
+        nullable: bool,
+        unit: TimeUnit,
+    };
+
+    pub const TimestampOptions = struct {
+        nullable: bool,
+        unit: TimeUnit,
+        timezone: [:0]const u8,
+    };
+
+    pub const IntervalOptions = struct {
+        nullable: bool,
+        unit: enum {
+            year_month,
+            day_time,
+            month_day_nanosecond,
+        },
+    };
 
     const Self = @This();
     pub fn fromPrimitive(comptime T: type, comptime opts: BinaryOptions) Self {

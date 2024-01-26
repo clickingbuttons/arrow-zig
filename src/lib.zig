@@ -1,7 +1,7 @@
 const std = @import("std");
 pub const ffi = @import("./ffi/lib.zig");
 pub const abi = ffi.abi;
-pub const sample = @import("./sample.zig");
+pub const sample_arrays = @import("./sample_arrays.zig");
 pub const ipc = @import("./ipc/lib.zig");
 pub const Array = @import("./array/array.zig").Array;
 pub const array = @import("./array/lib.zig");
@@ -11,7 +11,7 @@ fn sampleRecordBatch2(
     out_array: *abi.Array,
     out_schema: *abi.Schema,
 ) !void {
-    var a = try sample.all(allocator);
+    var a = try sample_arrays.all(allocator);
     errdefer a.deinit();
 
     try a.toRecordBatch("table 1");
@@ -29,7 +29,7 @@ test {
     _ = @import("ffi/tests.zig");
     _ = @import("tags.zig");
     _ = @import("array/lib.zig");
-    _ = @import("sample.zig");
+    _ = @import("sample_arrays.zig");
     _ = @import("ipc/reader.zig");
     _ = @import("ipc/writer.zig");
 }
@@ -42,7 +42,7 @@ test "abi doesn't leak" {
     defer schema.release.?(&schema);
 
     {
-        const sampleArr = try sample.all(std.testing.allocator);
+        const sampleArr = try sample_arrays.all(std.testing.allocator);
         defer sampleArr.deinit();
         try std.testing.expectEqual(@as(i64, @intCast(sampleArr.children.len)), schema.n_children);
     }

@@ -1,6 +1,5 @@
 const std = @import("std");
 const flatbuffers = @import("flatbuffers");
-const tags = @import("../tags.zig");
 const Array = @import("../array/array.zig").Array;
 const shared = @import("shared.zig");
 const TypeId = @import("../array/union.zig").TypeId;
@@ -29,7 +28,7 @@ fn getFieldNodes(accumulator: *std.ArrayList(FieldNode), array: *Array) !void {
 
 test "getFieldNodes root" {
     const allocator = std.testing.allocator;
-    const batch = try sample.all(allocator);
+    const batch = try arrays.all(allocator);
     defer batch.deinit();
 
     var nodes = std.ArrayList(FieldNode).init(allocator);
@@ -115,7 +114,7 @@ fn writeBuffers(
 
 test "writeBuffer dict" {
     const allocator = std.testing.allocator;
-    const dict = try sample.dict(allocator);
+    const dict = try arrays.dict(allocator);
     defer dict.deinit();
 
     var buffers = std.ArrayList(Buffer).init(allocator);
@@ -138,7 +137,7 @@ test "writeBuffer dict" {
 
 test "writeBuffer root" {
     const allocator = std.testing.allocator;
-    const batch = try sample.all(allocator);
+    const batch = try arrays.all(allocator);
     defer batch.deinit();
 
     var buffers = std.ArrayList(Buffer).init(allocator);
@@ -422,10 +421,10 @@ pub fn fileWriter(allocator: Allocator, fname: []const u8) !FileWriter {
 }
 
 const reader = @import("./reader.zig");
-const sample = @import("../sample.zig");
+const arrays = @import("../sample_arrays.zig");
 
 test "write and read sample file" {
-    const batch = try sample.all(std.testing.allocator);
+    const batch = try arrays.all(std.testing.allocator);
     try batch.toRecordBatch("record batch");
     defer batch.deinit();
 

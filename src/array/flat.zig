@@ -1,11 +1,11 @@
 // Flat means no children. Includes Primitive, VariableBinary, and FixedBinary layouts.
 const std = @import("std");
-const tags = @import("../tags.zig");
 const array = @import("./array.zig");
 const Array = array.Array;
+const Tag = Array.Tag;
 
-pub fn BuilderAdvanced(comptime T: type, comptime opts: tags.BinaryOptions) type {
-    const tag = tags.Tag.fromPrimitive(T, opts);
+pub fn BuilderAdvanced(comptime T: type, comptime opts: Tag.BinaryOptions) type {
+    const tag = Tag.fromPrimitive(T, opts);
     const layout = tag.abiLayout();
     if (layout != .Primitive and layout != .VariableBinary) {
         @compileError("unsupported flat type " ++ @typeName(T));
@@ -203,7 +203,7 @@ test "primitive finish" {
     const values = std.mem.bytesAsSlice(T, a.buffers[1]);
     try std.testing.expectEqualSlices(T, &[_]T{ 1, 0, 2, 4 }, values);
 
-    const tag = tags.Tag{ .Int = tags.IntOptions{ .nullable = true, .signed = true, .bit_width = ._32 } };
+    const tag = Tag{ .Int = Tag.IntOptions{ .nullable = true, .signed = true, .bit_width = ._32 } };
     try std.testing.expectEqual(tag, a.tag);
 }
 

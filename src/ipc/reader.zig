@@ -553,7 +553,7 @@ pub fn fileReader(allocator: Allocator, fname: []const u8) !FileReader {
     return FileReader.init(allocator, fname);
 }
 
-const sample = @import("../sample.zig");
+const arrays = @import("../sample_arrays.zig");
 
 pub fn testEquals(arr1: *Array, arr2: *Array) !void {
     errdefer {
@@ -576,7 +576,7 @@ fn testSample(fname: []const u8) !void {
     var ipc_reader = try fileReader(std.testing.allocator, fname);
     defer ipc_reader.deinit();
 
-    const expected = try sample.all(std.testing.allocator);
+    const expected = try arrays.all(std.testing.allocator);
     try expected.toRecordBatch("record batch");
     defer expected.deinit();
     try std.testing.expectEqual(expected.children.len, ipc_reader.reader.schema.?.fields.len);

@@ -1,17 +1,17 @@
 // List means single child. Includes List and Fixed-Size List layouts.
 const std = @import("std");
 const array = @import("./array.zig");
-const tags = @import("../tags.zig");
 const AnyBuilder = @import("./lib.zig").Builder;
 
 const Array = array.Array;
+const Tag = Array.Tag;
 
 pub fn BuilderAdvanced(
     comptime ChildBuilder: type,
-    comptime opts: tags.ListOptions,
+    comptime opts: Tag.ListOptions,
     comptime fixed_len: i32,
 ) type {
-    const tag: tags.Tag = if (fixed_len == 0)
+    const tag: Tag = if (fixed_len == 0)
         .{ .List = opts }
     else
         .{ .FixedList = .{ .nullable = opts.nullable, .fixed_len = fixed_len } };

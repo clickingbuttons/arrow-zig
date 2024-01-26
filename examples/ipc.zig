@@ -15,7 +15,7 @@ test "read file" {
 }
 
 test "write file" {
-    const batch = try arrow.sample.all(std.testing.allocator);
+    const batch = try arrow.sample_arrays.all(std.testing.allocator);
     try batch.toRecordBatch("record batch");
     defer batch.deinit();
 

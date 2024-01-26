@@ -12,8 +12,9 @@ pub const Array = struct {
     pub const buffer_alignment = 64;
     pub const Buffer = []align(buffer_alignment) u8;
     pub const Buffers = [3]Buffer;
+    pub const Tag = tags.Tag;
 
-    tag: tags.Tag,
+    tag: Tag,
     name: [:0]const u8,
     allocator: Allocator,
     // TODO: remove this field, compute from tag and buffers

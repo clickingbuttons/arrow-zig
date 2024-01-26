@@ -2,10 +2,10 @@
 // I've decided that children should handle null entries instead of dicts.
 const std = @import("std");
 const array = @import("./array.zig");
-const tags = @import("../tags.zig");
 const AnyBuilder = @import("./lib.zig").Builder;
 
 const Array = array.Array;
+const Tag = Array.Tag;
 const log = std.log.scoped(.arrow);
 
 pub const BuilderError = error{
@@ -14,7 +14,7 @@ pub const BuilderError = error{
 
 pub const DictOptions = struct {
     nullable: bool,
-    index: tags.DictOptions.Index = .i32,
+    index: Tag.DictOptions.Index = .i32,
     max_load_percentage: u64 = std.hash_map.default_max_load_percentage,
 };
 
@@ -87,7 +87,7 @@ pub fn BuilderAdvanced(
             }
         }
 
-        fn shrunkIndexType(self: *Self) !tags.DictOptions.Index {
+        fn shrunkIndexType(self: *Self) !Tag.DictOptions.Index {
             if (self.hashmap.count() < std.math.maxInt(i8)) {
                 return .i8;
             } else if (self.hashmap.count() < std.math.maxInt(i16)) {
@@ -114,7 +114,7 @@ pub fn BuilderAdvanced(
             return std.mem.sliceAsBytes(indices);
         }
 
-        fn shrinkIndex(self: *Self, index: tags.DictOptions.Index) !Array.Buffer {
+        fn shrinkIndex(self: *Self, index: Tag.DictOptions.Index) !Array.Buffer {
             return switch (index) {
                 .i8 => try self.shrinkIndexTo(i8),
                 .i16 => try self.shrinkIndexTo(i16),
@@ -132,7 +132,7 @@ pub fn BuilderAdvanced(
             self.hashmap.deinit();
             var res = try Array.init(allocator);
             res.* = .{
-                .tag = tags.Tag{ .Dictionary = .{ .index = shrunk_index } },
+                .tag = Tag{ .Dictionary = .{ .index = shrunk_index } },
                 .name = @typeName(AppendType) ++ " builder",
                 .allocator = allocator,
                 .length = length,
@@ -243,7 +243,7 @@ test "init + deinit struct" {
 
 test "finish" {
     const T = ?i8;
-    const child_tag = tags.Tag{ .Int = tags.IntOptions{ .nullable = true, .signed = true, .bit_width = ._8 } };
+    const child_tag = Tag{ .Int = Tag.IntOptions{ .nullable = true, .signed = true, .bit_width = ._8 } };
     var b = try BuilderAdvanced(
         flat.Builder(T),
         AutoContext(T),

@@ -2,7 +2,7 @@
 
 const flatbuffers = @import("flatbuffers");
 const types = @import("lib.zig");
-const tags = @import("../../tags.zig");
+const Tag = @import("../../array/array.zig").Array.Tag;
 const shared = @import("../shared.zig");
 
 const log = shared.log;
@@ -51,9 +51,9 @@ pub const DictionaryEncoding = struct {
         try builder.appendTableFieldWithDefault(types.DictionaryKind, self.dictionary_kind, .dense_array);
         return builder.endTable();
     }
-    pub fn toTag(self: Self) IpcError!tags.Tag {
+    pub fn toTag(self: Self) IpcError!Tag {
         if (self.index_type) |t| {
-            const index: tags.DictOptions.Index = switch (t.bit_width) {
+            const index: Tag.DictOptions.Index = switch (t.bit_width) {
                 8 => .i8,
                 16 => .i16,
                 32 => .i32,
@@ -70,7 +70,7 @@ pub const DictionaryEncoding = struct {
         return IpcError.InvalidDictionaryIndexType;
     }
 
-    pub fn initFromTag(id: *i64, tag: tags.Tag) ?Self {
+    pub fn initFromTag(id: *i64, tag: Tag) ?Self {
         if (tag != .Dictionary) return null;
 
         const my_id = id.*;
