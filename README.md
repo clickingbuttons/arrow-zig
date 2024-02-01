@@ -15,7 +15,7 @@ Library to build Arrow arrays from Zig primitives and read/write them to FFI and
 
     .dependencies = .{
         .@"arrow-zig" = .{
-            .url = "https://github.com/clickingbuttons/arrow-zig/archive/refs/tags/latest-release.tar.gz",
+            .url = "https://github.com/clickingbuttons/arrow-zig/archive/refs/tags/LATEST_RELEASE_HERE.tar.gz",
         },
     },
 }

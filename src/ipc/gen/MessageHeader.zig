@@ -4,7 +4,6 @@ const flatbuffers = @import("flatbuffers");
 const std = @import("std");
 const types = @import("lib.zig");
 
-
 /// ----------------------------------------------------------------------
 /// The root Message type
 /// This union enables us to easily send different message types without
@@ -57,7 +56,6 @@ pub const MessageHeader = union(PackedMessageHeader.Tag) {
         }
     }
 };
-
 
 /// ----------------------------------------------------------------------
 /// The root Message type

@@ -22,6 +22,21 @@ pub const RecordBatch = struct {
     buffers: []types.Buffer,
     /// Optional compression of the message body
     compression: ?types.BodyCompression = null,
+    /// Some types such as Utf8View are represented using a variable number of buffers.
+    /// For each such Field in the pre-ordered flattened logical schema, there will be
+    /// an entry in variadicBufferCounts to indicate the number of number of variadic
+    /// buffers which belong to that Field in the current RecordBatch.
+    ///
+    /// For example, the schema
+    ///     col1: Struct<alpha: Int32, beta: BinaryView, gamma: Float64>
+    ///     col2: Utf8View
+    /// contains two Fields with variadic buffers so variadicBufferCounts will have
+    /// two entries, the first counting the variadic buffers of `col1.beta` and the
+    /// second counting `col2`'s.
+    ///
+    /// This field may be omitted if and only if the schema contains no Fields with
+    /// a variable number of buffers, such as BinaryView and Utf8View.
+    variadic_buffer_counts: []i64,
 
     const Self = @This();
 
@@ -35,18 +50,23 @@ pub const RecordBatch = struct {
             allocator.free(buffers_);
         }
         const compression_ = if (try packed_.compression()) |c| try types.BodyCompression.init(c) else null;
-        errdefer {}
+        const variadic_buffer_counts_ = try flatbuffers.unpackVector(allocator, i64, packed_, "variadicBufferCounts");
+        errdefer {
+            allocator.free(variadic_buffer_counts_);
+        }
         return .{
             .length = try packed_.length(),
             .nodes = nodes_,
             .buffers = buffers_,
             .compression = compression_,
+            .variadic_buffer_counts = variadic_buffer_counts_,
         };
     }
 
     pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
         allocator.free(self.nodes);
         allocator.free(self.buffers);
+        allocator.free(self.variadic_buffer_counts);
     }
 
     pub fn pack(self: Self, builder: *flatbuffers.Builder) flatbuffers.Error!u32 {
@@ -54,6 +74,7 @@ pub const RecordBatch = struct {
             .nodes = try builder.prependVector(types.FieldNode, self.nodes),
             .buffers = try builder.prependVector(types.Buffer, self.buffers),
             .compression = if (self.compression) |c| try c.pack(builder) else 0,
+            .variadic_buffer_counts = try builder.prependVector(i64, self.variadic_buffer_counts),
         };
 
         try builder.startTable();
@@ -61,6 +82,7 @@ pub const RecordBatch = struct {
         try builder.appendTableFieldOffset(field_offsets.nodes);
         try builder.appendTableFieldOffset(field_offsets.buffers);
         try builder.appendTableFieldOffset(field_offsets.compression);
+        try builder.appendTableFieldOffset(field_offsets.variadic_buffer_counts);
         return builder.endTable();
     }
 };
@@ -101,5 +123,23 @@ pub const PackedRecordBatch = struct {
     /// Optional compression of the message body
     pub fn compression(self: Self) flatbuffers.Error!?types.PackedBodyCompression {
         return self.table.readField(?types.PackedBodyCompression, 3);
+    }
+
+    /// Some types such as Utf8View are represented using a variable number of buffers.
+    /// For each such Field in the pre-ordered flattened logical schema, there will be
+    /// an entry in variadicBufferCounts to indicate the number of number of variadic
+    /// buffers which belong to that Field in the current RecordBatch.
+    ///
+    /// For example, the schema
+    ///     col1: Struct<alpha: Int32, beta: BinaryView, gamma: Float64>
+    ///     col2: Utf8View
+    /// contains two Fields with variadic buffers so variadicBufferCounts will have
+    /// two entries, the first counting the variadic buffers of `col1.beta` and the
+    /// second counting `col2`'s.
+    ///
+    /// This field may be omitted if and only if the schema contains no Fields with
+    /// a variable number of buffers, such as BinaryView and Utf8View.
+    pub fn variadicBufferCounts(self: Self) flatbuffers.Error![]align(1) i64 {
+        return self.table.readField([]align(1) i64, 4);
     }
 };

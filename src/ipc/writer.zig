@@ -262,10 +262,11 @@ pub fn Writer(comptime WriterType: type) type {
             errdefer buffers.deinit();
             for (array.children) |c| _ = try writeBuffers(c, void, &buffers);
 
-            return .{
+            return flat.RecordBatch{
                 .length = @bitCast(array.length),
                 .nodes = try nodes.toOwnedSlice(),
                 .buffers = try buffers.toOwnedSlice(),
+                .variadic_buffer_counts = &.{},
             };
         }
 
