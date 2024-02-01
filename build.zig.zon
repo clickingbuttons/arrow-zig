@@ -1,11 +1,11 @@
 .{
 	.name = "arrow-zig",
-	.version = "0.0.3",
+	.version = "0.0.4",
 
 	.dependencies = .{
 		.@"flatbuffers-zig" = .{
-			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/0.0.2.tar.gz",
-			.hash = "12209f877dd1b9d95905f1de79f41249df344fbd2700510196978df4af94e0abb6f2"
+			.url = "https://github.com/clickingbuttons/flatbuffers-zig/archive/0.0.3.tar.gz",
+			.hash = "1220020db92740fef473cbd8a90e9decf9d74c363d85cf1b5a93ffe5a14bcc6d0e4e"
 		},
 		.lz4 = .{
 			.url = "https://github.com/clickingbuttons/lz4/archive/refs/tags/0.0.4.tar.gz",
